@@ -1,0 +1,42 @@
+# Node
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Environment files
+.env
+.env.*
+!.env.example
+
+# OS/editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Logs and temp
+*.log
+tmp/
+temp/
+
+# Flutter/Dart
+mobile/.dart_tool/
+mobile/.packages
+mobile/.flutter-plugins
+mobile/.flutter-plugins-dependencies
+mobile/.metadata
+mobile/build/
+mobile/.pub-cache/
+mobile/ios/Pods/
+mobile/ios/.symlinks/
+mobile/macos/Pods/
+mobile/linux/flutter/ephemeral/
+mobile/windows/flutter/ephemeral/
+
+# Web build outputs
+web/dist/
+
+# Backend uploads/cache (keep avatars committed only if intentional)
+backend/public/avatars/
