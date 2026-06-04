@@ -4,9 +4,11 @@ import 'package:flutter_animate/flutter_animate.dart';
 import 'dart:async';
 import 'dart:math' as math;
 import 'package:google_fonts/google_fonts.dart';
+import 'package:provider/provider.dart';
 import '../../theme/app_theme.dart';
 import '../../services/api.dart';
 import '../../models/specialty.dart';
+import '../../state/session_state.dart';
 import '../../widgets/background_wave_painter.dart';
 import '../../widgets/specialty_card.dart';
 import '../../widgets/user_profile_bar.dart';
@@ -554,6 +556,7 @@ class _QuizScreenState extends State<QuizScreen>
 
   @override
   Widget build(BuildContext context) {
+    final isFr = Provider.of<SessionState>(context).isFrench;
     if (_selectedSpecialty == null) {
       return _buildSpecialtyPicker();
     }
@@ -666,18 +669,19 @@ class _QuizScreenState extends State<QuizScreen>
                 )
               else ...[
                 if (!seasonOneHasQuiz)
-                  const Padding(
-                    padding: EdgeInsets.only(bottom: 12),
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 12),
                     child: _InfoBanner(
-                      title: 'Aucun quiz publie',
-                      message:
-                          'Publiez une Saison (10 episodes) depuis le web admin, puis revenez ici.',
+                      title: isFr ? 'Aucun quiz publie' : 'No quiz published',
+                      message: isFr
+                          ? 'Publiez une Saison (10 episodes) depuis le web admin, puis revenez ici.'
+                          : 'Publish a Season (10 episodes) from the web admin, then come back here.',
                     ),
                   ),
                 _SlalomSeasonSection(
                   key: _seasonOneKey,
-                  title: 'SAISON 1',
-                  subtitle: 'Episodes 1 a 10',
+                  title: isFr ? 'SAISON 1' : 'SEASON 1',
+                  subtitle: isFr ? 'Episodes 1 a 10' : 'Episodes 1 to 10',
                   nodes: seasonOneNodes,
                   currentLevel: currentSeasonOne,
                   onNodeTap: (node) {
@@ -695,8 +699,8 @@ class _QuizScreenState extends State<QuizScreen>
                 const SizedBox(height: 18),
                 _SlalomSeasonSection(
                   key: _seasonTwoKey,
-                  title: 'SAISON 2',
-                  subtitle: 'Episodes 1 a 10',
+                  title: isFr ? 'SAISON 2' : 'SEASON 2',
+                  subtitle: isFr ? 'Episodes 1 a 10' : 'Episodes 1 to 10',
                   nodes: seasonTwoNodes,
                   currentLevel: currentSeasonTwo,
                   onSeasonTap:
@@ -710,7 +714,9 @@ class _QuizScreenState extends State<QuizScreen>
                   lockedHint:
                       seasonTwoUnlocked
                           ? null
-                          : 'Debloquez la Saison 2 avec $_requiredStarsForSeasonTwo etoiles en Saison 1.',
+                          : isFr
+                          ? 'Debloquez la Saison 2 avec $_requiredStarsForSeasonTwo etoiles en Saison 1.'
+                          : 'Unlock Season 2 with $_requiredStarsForSeasonTwo stars in Season 1.',
                   onNodeTap:
                       seasonTwoUnlocked
                           ? (node) {
@@ -735,10 +741,10 @@ class _QuizScreenState extends State<QuizScreen>
                           ),
                 ),
                 if (!seasonTwoHasQuiz)
-                  const Padding(
-                    padding: EdgeInsets.only(top: 10),
+                  Padding(
+                    padding: const EdgeInsets.only(top: 10),
                     child: Text(
-                      'Aucun quiz publie pour la Saison 2 pour le moment.',
+                      isFr ? 'Aucun quiz publie pour la Saison 2 pour le moment.' : 'No quiz published for Season 2 yet.',
                       textAlign: TextAlign.center,
                       style: TextStyle(
                         fontSize: 12,
@@ -750,8 +756,8 @@ class _QuizScreenState extends State<QuizScreen>
                 const SizedBox(height: 18),
                 _SlalomSeasonSection(
                   key: _seasonThreeKey,
-                  title: 'SAISON 3',
-                  subtitle: 'Episodes 1 a 10',
+                  title: isFr ? 'SAISON 3' : 'SEASON 3',
+                  subtitle: isFr ? 'Episodes 1 a 10' : 'Episodes 1 to 10',
                   nodes: seasonThreeNodes,
                   currentLevel: currentSeasonThree,
                   onSeasonTap:
@@ -765,7 +771,9 @@ class _QuizScreenState extends State<QuizScreen>
                   lockedHint:
                       seasonThreeUnlocked
                           ? null
-                          : 'Debloquez la Saison 3 avec $_requiredStarsForSeasonTwo etoiles en Saison 2.',
+                          : isFr
+                          ? 'Debloquez la Saison 3 avec $_requiredStarsForSeasonTwo etoiles en Saison 2.'
+                          : 'Unlock Season 3 with $_requiredStarsForSeasonTwo stars in Season 2.',
                   onNodeTap:
                       seasonThreeUnlocked
                           ? (node) {
@@ -790,10 +798,10 @@ class _QuizScreenState extends State<QuizScreen>
                           ),
                 ),
                 if (!seasonThreeHasQuiz)
-                  const Padding(
-                    padding: EdgeInsets.only(top: 10),
+                  Padding(
+                    padding: const EdgeInsets.only(top: 10),
                     child: Text(
-                      'Aucun quiz publie pour la Saison 3 pour le moment.',
+                      isFr ? 'Aucun quiz publie pour la Saison 3 pour le moment.' : 'No quiz published for Season 3 yet.',
                       textAlign: TextAlign.center,
                       style: TextStyle(
                         fontSize: 12,
@@ -805,8 +813,8 @@ class _QuizScreenState extends State<QuizScreen>
                 const SizedBox(height: 18),
                 _SlalomSeasonSection(
                   key: _seasonFourKey,
-                  title: 'SAISON 4',
-                  subtitle: 'Episodes 1 a 10',
+                  title: isFr ? 'SAISON 4' : 'SEASON 4',
+                  subtitle: isFr ? 'Episodes 1 a 10' : 'Episodes 1 to 10',
                   nodes: seasonFourNodes,
                   currentLevel: currentSeasonFour,
                   onSeasonTap:
@@ -820,7 +828,9 @@ class _QuizScreenState extends State<QuizScreen>
                   lockedHint:
                       seasonFourUnlocked
                           ? null
-                          : 'Debloquez la Saison 4 avec $_requiredStarsForSeasonTwo etoiles en Saison 3.',
+                          : isFr
+                          ? 'Debloquez la Saison 4 avec $_requiredStarsForSeasonTwo etoiles en Saison 3.'
+                          : 'Unlock Season 4 with $_requiredStarsForSeasonTwo stars in Season 3.',
                   onNodeTap:
                       seasonFourUnlocked
                           ? (node) {
@@ -1569,13 +1579,20 @@ class _QuizRunnerSheetState extends State<_QuizRunnerSheet> {
                             ),
                             const SizedBox(height: 20),
                             if (_reward != null)
-                              Text(
-                                '+${_reward!['points_earned'] ?? 0} points | +${_reward!['xp_earned'] ?? 0} XP',
-                                style: const TextStyle(
-                                  fontSize: 14,
-                                  fontWeight: FontWeight.w700,
-                                  color: Color(0xFF29B6F6),
-                                ),
+                              Row(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: [
+                                  const Text('🪙', style: TextStyle(fontSize: 16)),
+                                  const SizedBox(width: 6),
+                                  Text(
+                                    '+${_reward!['xp_earned'] ?? 0} XP  •  +${_reward!['points_earned'] ?? 0} pts',
+                                    style: const TextStyle(
+                                      fontSize: 14,
+                                      fontWeight: FontWeight.w700,
+                                      color: Color(0xFFF59E0B),
+                                    ),
+                                  ),
+                                ],
                               )
                             else
                               const Text(

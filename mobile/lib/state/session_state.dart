@@ -16,6 +16,24 @@ class SessionState extends ChangeNotifier {
   String? _activeTitle;
   int _hintBalance = 0;
 
+  // Chat messages partagés (vocal + texte)
+  final List<Map<String, dynamic>> _chatMessages = [];
+  List<Map<String, dynamic>> get chatMessages => List.unmodifiable(_chatMessages);
+
+  void addChatMessage({required String text, required bool isDoctor}) {
+    _chatMessages.add({
+      'text': text,
+      'isDoctor': isDoctor,
+      'time': DateTime.now().toIso8601String(),
+    });
+    notifyListeners();
+  }
+
+  void clearChatMessages() {
+    _chatMessages.clear();
+    notifyListeners();
+  }
+
   // Timer
   int _elapsedSeconds = 0;
   int? _examTimeLimitMinutes;
@@ -128,7 +146,8 @@ class SessionState extends ChangeNotifier {
     _elapsedSeconds = 0;
     _isExamMode = isExam;
     _examTimeLimitMinutes = timeLimitMinutes;
-    _questionCount = 0; // Réinitialiser le compteur à chaque nouveau cas
+    _questionCount = 0;
+    _chatMessages.clear();
     notifyListeners();
   }
 

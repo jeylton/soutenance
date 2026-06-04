@@ -129,6 +129,7 @@ class _StatsScreenState extends State<StatsScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final isFr = Provider.of<SessionState>(context).isFrench;
     final completed = _sessions.where((s) => s['score'] != null).toList();
     final totalScore = completed.fold<double>(
       0,
@@ -191,7 +192,7 @@ class _StatsScreenState extends State<StatsScreen> {
               children: [
                 const SizedBox(height: 20),
                 Text(
-                  'Tableau des Trophées',
+                  isFr ? 'Tableau des Trophées' : 'Trophy Board',
                   style: GoogleFonts.outfit(
                     fontSize: 32,
                     fontWeight: FontWeight.w900,
@@ -235,7 +236,7 @@ class _StatsScreenState extends State<StatsScreen> {
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
                               Text(
-                                'SCORE GLOBAL',
+                                isFr ? 'SCORE GLOBAL' : 'OVERALL SCORE',
                                 style: GoogleFonts.outfit(
                                   fontSize: 12,
                                   fontWeight: FontWeight.w900,
@@ -385,7 +386,7 @@ class _StatsScreenState extends State<StatsScreen> {
                             ),
                             const SizedBox(height: 16),
                             Text(
-                              'Aucune session terminée',
+                              isFr ? 'Aucune session terminée' : 'No completed sessions',
                               style: GoogleFonts.outfit(
                                 fontSize: 16,
                                 fontWeight: FontWeight.w700,
@@ -394,7 +395,7 @@ class _StatsScreenState extends State<StatsScreen> {
                             ),
                             const SizedBox(height: 8),
                             Text(
-                              'Les scores apparaîtront ici après vos simulations',
+                              isFr ? 'Les scores apparaîtront ici après vos simulations' : 'Scores will appear here after your simulations',
                               style: GoogleFonts.outfit(
                                 fontSize: 13,
                                 color: const Color(0xFF94A3B8),
@@ -408,7 +409,7 @@ class _StatsScreenState extends State<StatsScreen> {
 
                   // ─── Gamification Section ───
                   const SizedBox(height: 24),
-                  _buildSectionTitle('PROGRESSION'),
+                  _buildSectionTitle(isFr ? 'PROGRESSION' : 'PROGRESS'),
                   const SizedBox(height: 16),
                   Container(
                     width: double.infinity,
@@ -454,13 +455,19 @@ class _StatsScreenState extends State<StatsScreen> {
                                     ),
                                   ),
                                   const SizedBox(height: 4),
-                                  Text(
-                                    '${_gamification['xp'] ?? 0} XP',
-                                    style: GoogleFonts.outfit(
-                                      fontSize: 14,
-                                      fontWeight: FontWeight.w600,
-                                      color: const Color(0xFF94A3B8),
-                                    ),
+                                  Row(
+                                    children: [
+                                      const Text('🪙', style: TextStyle(fontSize: 13)),
+                                      const SizedBox(width: 4),
+                                      Text(
+                                        '${_gamification['xp'] ?? 0} XP',
+                                        style: GoogleFonts.outfit(
+                                          fontSize: 14,
+                                          fontWeight: FontWeight.w600,
+                                          color: const Color(0xFFF59E0B),
+                                        ),
+                                      ),
+                                    ],
                                   ),
                                 ],
                               ),
@@ -489,7 +496,7 @@ class _StatsScreenState extends State<StatsScreen> {
                         Align(
                           alignment: Alignment.centerRight,
                           child: Text(
-                            '${((_gamification['xp'] ?? 0) as int) % 500}/500 XP pour le niveau suivant',
+                            '${((_gamification['xp'] ?? 0) as int) % 500}/500 XP ${isFr ? 'pour le niveau suivant' : 'to next level'}',
                             style: GoogleFonts.outfit(
                               fontSize: 11,
                               fontWeight: FontWeight.w600,
@@ -505,7 +512,7 @@ class _StatsScreenState extends State<StatsScreen> {
                   if ((_gamification['badges'] as List?)?.isNotEmpty ??
                       false) ...[
                     const SizedBox(height: 24),
-                    _buildSectionTitle('BADGES OBTENUS'),
+                    _buildSectionTitle(isFr ? 'BADGES OBTENUS' : 'EARNED BADGES'),
                     const SizedBox(height: 16),
                     Wrap(
                       spacing: 12,
@@ -550,7 +557,7 @@ class _StatsScreenState extends State<StatsScreen> {
                     const SizedBox(height: 24),
                     Row(
                       children: [
-                        _buildSectionTitle('TOP 5 CLASSEMENT'),
+                        _buildSectionTitle(isFr ? 'TOP 5 CLASSEMENT' : 'TOP 5 RANKING'),
                         const Spacer(),
                         GestureDetector(
                           onTap: () {

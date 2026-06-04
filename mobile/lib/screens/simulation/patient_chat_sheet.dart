@@ -35,7 +35,7 @@ class _PatientChatSheetState extends State<PatientChatSheet> {
   ChatMessage? _lastDeletedMessage;
   int? _lastDeletedIndex;
 
-  late final List<ChatMessage> _messages;
+  List<ChatMessage> _messages = [];
 
   String _normalizeGender(String raw) {
     final g = raw.toLowerCase();
@@ -69,49 +69,28 @@ class _PatientChatSheetState extends State<PatientChatSheet> {
             ? medical['age'] as num
             : (caseAge is num ? caseAge : null);
 
-    String gender = _normalizeGender(rawGender);
+    final genderExplicit = rawGender.isNotEmpty;
+    String gender = genderExplicit ? _normalizeGender(rawGender) : 'male';
     String ageGroup = _ageToGroup(ageNum);
 
-    if (avatar.contains('gif5') ||
-        avatar.contains('enfant homme') ||
-        (avatar.contains('child') && avatar.contains('male'))) {
-      return (gender: 'male', ageGroup: 'child');
-    }
-    if (avatar.contains('gif6') ||
-        avatar.contains('enfant femme') ||
-        (avatar.contains('child') && avatar.contains('female'))) {
-      return (gender: 'female', ageGroup: 'child');
-    }
-    if (avatar.contains('gif3') ||
-        avatar.contains('senior homme') ||
-        (avatar.contains('senior') && avatar.contains('male'))) {
-      return (gender: 'male', ageGroup: 'senior');
-    }
-    if (avatar.contains('gif4') ||
-        avatar.contains('senior femme') ||
-        (avatar.contains('senior') && avatar.contains('female'))) {
-      return (gender: 'female', ageGroup: 'senior');
-    }
-    if (avatar.contains('gif1') ||
-        avatar.contains('adulte homme') ||
-        (avatar.contains('adult') && avatar.contains('male'))) {
-      return (gender: 'male', ageGroup: 'adult');
-    }
-    if (avatar.contains('gif2') ||
-        avatar.contains('adulte femme') ||
-        (avatar.contains('adult') && avatar.contains('female'))) {
-      return (gender: 'female', ageGroup: 'adult');
-    }
-
-    if (avatar.contains('femme') || avatar.contains('female'))
-      gender = 'female';
-    if (avatar.contains('homme') || avatar.contains('male')) gender = 'male';
-    if (avatar.contains('enfant') || avatar.contains('child'))
+    if (avatar.contains('gif5') || avatar.contains('gif6') ||
+        avatar.contains('enfant') || avatar.contains('child')) {
       ageGroup = 'child';
-    if (avatar.contains('senior') ||
-        avatar.contains('vieux') ||
-        avatar.contains('old')) {
+      if (!genderExplicit) {
+        gender = avatar.contains('gif6') || avatar.contains('enfant femme') ? 'female' : 'male';
+      }
+    } else if (avatar.contains('gif3') || avatar.contains('gif4') ||
+        avatar.contains('senior') || avatar.contains('vieux') || avatar.contains('old')) {
       ageGroup = 'senior';
+      if (!genderExplicit) {
+        gender = avatar.contains('gif4') || avatar.contains('senior femme') ? 'female' : 'male';
+      }
+    } else if (!genderExplicit) {
+      if (avatar.contains('gif2') || avatar.contains('femme') || avatar.contains('female')) {
+        gender = 'female';
+      } else if (avatar.contains('gif1') || avatar.contains('homme') || avatar.contains('male')) {
+        gender = 'male';
+      }
     }
 
     return (gender: gender, ageGroup: ageGroup);
@@ -120,15 +99,28 @@ class _PatientChatSheetState extends State<PatientChatSheet> {
   @override
   void initState() {
     super.initState();
-    final caseData = Provider.of<SessionState>(context, listen: false).caseData;
+    final state = Provider.of<SessionState>(context, listen: false);
+    final caseData = state.caseData;
     final reason = caseData?['consultation_reason'] ?? 'Je ne me sens pas bien';
-    _messages = [
-      ChatMessage(
+
+    // Charger depuis SessionState (messages partagés vocal + texte)
+    final shared = state.chatMessages;
+    if (shared.isEmpty) {
+      // Premier message d'accueil
+      final greeting = ChatMessage(
         text: 'Bonjour Docteur. $reason',
         isDoctor: false,
         time: DateTime.now().subtract(const Duration(minutes: 5)),
-      ),
-    ];
+      );
+      _messages = [greeting];
+      state.addChatMessage(text: greeting.text, isDoctor: false);
+    } else {
+      _messages = shared.map((m) => ChatMessage(
+        text: m['text'] as String,
+        isDoctor: m['isDoctor'] as bool,
+        time: DateTime.tryParse(m['time'] as String? ?? '') ?? DateTime.now(),
+      )).toList();
+    }
     _initTts();
   }
 
@@ -294,6 +286,7 @@ class _PatientChatSheetState extends State<PatientChatSheet> {
         _messages.add(
           ChatMessage(text: trimmed, isDoctor: true, time: DateTime.now()),
         );
+        sessionState.addChatMessage(text: trimmed, isDoctor: true);
       }
       _controller.clear();
     });
@@ -322,6 +315,7 @@ class _PatientChatSheetState extends State<PatientChatSheet> {
         );
         _isSending = false;
       });
+      sessionState.addChatMessage(text: reply, isDoctor: false);
       _scrollToBottom();
       _speakReply(reply);
     } catch (e) {

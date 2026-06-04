@@ -54,13 +54,24 @@ class _FeedbackScreenState extends State<FeedbackScreen> {
     });
   }
 
+  String _cleanFeedback(String text) {
+    return text
+        .replaceAll(RegExp(r'\*{1,3}'), '')   // retire * ** ***
+        .replaceAll(RegExp(r'#{1,6}\s*'), '')  // retire ## titres
+        .replaceAll(RegExp(r'_{1,2}'), '')     // retire _ __
+        .replaceAll(RegExp(r'^\s*[-•]\s+', multiLine: true), '• ') // normalise les puces
+        .replaceAll(RegExp(r'\n{3,}'), '\n\n') // max 2 sauts de ligne
+        .trim();
+  }
+
   Future<void> _loadTutorFeedback() async {
     const maxAttempts = 14; // ~21s
     for (var attempt = 0; attempt < maxAttempts; attempt++) {
       if (!mounted) return;
       try {
         final session = await Api.getSession(widget.sessionId);
-        final feedback = (session['feedback'] ?? '').toString();
+        final raw = (session['feedback'] ?? '').toString();
+        final feedback = _cleanFeedback(raw);
         if (feedback.trim().isNotEmpty) {
           if (!mounted) return;
           setState(() {

@@ -145,54 +145,31 @@ class _SimulationScreenState extends State<SimulationScreen> {
             ? medical['age'] as num
             : (caseAge is num ? caseAge : null);
 
-    String gender = _normalizeGender(rawGender);
+    // medical_history.gender est la source de vérité — priorité absolue
+    final genderExplicit = rawGender.isNotEmpty;
+    String gender = genderExplicit ? _normalizeGender(rawGender) : 'male';
     String ageGroup = _ageToGroup(ageNum);
 
-    // Strong avatar naming hints from your GIF catalog.
-    if (avatar.contains('gif5') ||
-        avatar.contains('enfant homme') ||
-        (avatar.contains('child') && avatar.contains('male'))) {
-      return (gender: 'male', ageGroup: 'child');
-    }
-    if (avatar.contains('gif6') ||
-        avatar.contains('enfant femme') ||
-        (avatar.contains('child') && avatar.contains('female'))) {
-      return (gender: 'female', ageGroup: 'child');
-    }
-    if (avatar.contains('gif3') ||
-        avatar.contains('senior homme') ||
-        (avatar.contains('senior') && avatar.contains('male'))) {
-      return (gender: 'male', ageGroup: 'senior');
-    }
-    if (avatar.contains('gif4') ||
-        avatar.contains('senior femme') ||
-        (avatar.contains('senior') && avatar.contains('female'))) {
-      return (gender: 'female', ageGroup: 'senior');
-    }
-    if (avatar.contains('gif1') ||
-        avatar.contains('adulte homme') ||
-        (avatar.contains('adult') && avatar.contains('male'))) {
-      return (gender: 'male', ageGroup: 'adult');
-    }
-    if (avatar.contains('gif2') ||
-        avatar.contains('adulte femme') ||
-        (avatar.contains('adult') && avatar.contains('female'))) {
-      return (gender: 'female', ageGroup: 'adult');
-    }
-
-    if (avatar.contains('femme') || avatar.contains('female')) {
-      gender = 'female';
-    }
-    if (avatar.contains('homme') || avatar.contains('male')) {
-      gender = 'male';
-    }
-    if (avatar.contains('enfant') || avatar.contains('child')) {
+    // GIF hints → utilisés uniquement pour l'ageGroup, pas pour écraser le gender explicite
+    if (avatar.contains('gif5') || avatar.contains('gif6') ||
+        avatar.contains('enfant') || avatar.contains('child')) {
       ageGroup = 'child';
-    }
-    if (avatar.contains('senior') ||
-        avatar.contains('vieux') ||
-        avatar.contains('old')) {
+      if (!genderExplicit) {
+        gender = avatar.contains('gif6') || avatar.contains('enfant femme') ? 'female' : 'male';
+      }
+    } else if (avatar.contains('gif3') || avatar.contains('gif4') ||
+        avatar.contains('senior') || avatar.contains('vieux') || avatar.contains('old')) {
       ageGroup = 'senior';
+      if (!genderExplicit) {
+        gender = avatar.contains('gif4') || avatar.contains('senior femme') ? 'female' : 'male';
+      }
+    } else if (!genderExplicit) {
+      // Fallback avatar hints pour le gender seulement si non renseigné
+      if (avatar.contains('gif2') || avatar.contains('femme') || avatar.contains('female')) {
+        gender = 'female';
+      } else if (avatar.contains('gif1') || avatar.contains('homme') || avatar.contains('male')) {
+        gender = 'male';
+      }
     }
 
     return (gender: gender, ageGroup: ageGroup);
@@ -500,6 +477,7 @@ class _SimulationScreenState extends State<SimulationScreen> {
 
     setState(() => _isWaitingReply = true);
     sessionState.incrementQuestionCount();
+    sessionState.addChatMessage(text: text, isDoctor: true);
 
     try {
       final caseId = sessionState.caseId;
@@ -512,6 +490,7 @@ class _SimulationScreenState extends State<SimulationScreen> {
         Api.saveChatMessage(sessionId, 'patient', reply);
       }
       if (mounted) {
+        sessionState.addChatMessage(text: reply, isDoctor: false);
         setState(() {
           _lastPatientReply = reply;
           _isWaitingReply = false;
