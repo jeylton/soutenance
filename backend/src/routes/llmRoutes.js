@@ -419,6 +419,29 @@ router.get('/providers', async (req, res) => {
   });
 });
 
+// ─── Diagnostics déjà utilisés par spécialité ───
+router.get('/used-diagnoses/:specialtyId', async (req, res) => {
+  const specialtyId = Number(req.params.specialtyId);
+  if (!specialtyId) return res.status(400).json({ error: 'specialtyId required' });
+  try {
+    const { data: cases } = await supabase
+      .from('cases')
+      .select('disease_id,logic_medicale,status')
+      .eq('specialty_id', specialtyId)
+      .in('status', ['active', 'draft', 'archived']);
+
+    const diagnoses = [...new Set(
+      (cases || [])
+        .map(c => (c.disease_id || c.logic_medicale || '').trim())
+        .filter(Boolean)
+    )].sort();
+
+    return res.json({ specialtyId, count: diagnoses.length, diagnoses });
+  } catch (e) {
+    return res.status(500).json({ error: e.message });
+  }
+});
+
 // ─── AI Case Generation ───
 router.post('/generate-case', async (req, res) => {
   const { specialty_name, specialty_id, difficulty, excluded_diagnoses, strict_unique_specialty } = req.body;
@@ -438,11 +461,11 @@ router.post('/generate-case', async (req, res) => {
       resolvedSpecialtyId = specByName?.id || null;
     }
 
-    const strictUnique = strict_unique_specialty === true;
-
+    // Déduplication automatique : toujours activée si on connaît la spécialité.
+    // On charge TOUS les diagnostics finals déjà publiés pour cette spécialité
+    // (toutes saisons confondues) afin d'éviter les répétitions.
     let excludedDiagnoses = [];
-    if (strictUnique && resolvedSpecialtyId) {
-      // Strict uniqueness (optional): exclude ALL diagnoses already used for this specialty.
+    if (resolvedSpecialtyId) {
       const unique = new Map();
       const pageSize = 1000;
       for (let offset = 0; offset <= 10000; offset += pageSize) {
@@ -450,7 +473,7 @@ router.post('/generate-case', async (req, res) => {
           .from('cases')
           .select('disease_id,logic_medicale,status')
           .eq('specialty_id', resolvedSpecialtyId)
-          .in('status', ['active', 'draft'])
+          .in('status', ['active', 'draft', 'archived'])
           .range(offset, offset + pageSize - 1);
 
         if (existingCasesErr) {

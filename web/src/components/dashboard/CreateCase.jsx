@@ -129,6 +129,8 @@ const CreateCase = ({ onBack, editData, presetSpecialtyId, presetSeason, presetE
     const [generating, setGenerating] = useState(false);
     const [generated, setGenerated] = useState(!!editData);
     const [generatedDiagnosesBySpecialty, setGeneratedDiagnosesBySpecialty] = useState({});
+    const [usedDiagnoses, setUsedDiagnoses] = useState([]);
+    const [loadingUsed, setLoadingUsed] = useState(false);
 
     const normalizeDiagnosis = (value) =>
         String(value || '')
@@ -195,6 +197,17 @@ const CreateCase = ({ onBack, editData, presetSpecialtyId, presetSeason, presetE
             .then((d) => setAllCases(d.cases || []))
             .catch(() => setAllCases([]));
     }, [api]);
+
+    // Charger les diagnostics déjà utilisés pour la spécialité sélectionnée
+    useEffect(() => {
+        if (!selectedSpecialty) { setUsedDiagnoses([]); return; }
+        setLoadingUsed(true);
+        fetch(`${api}/api/llm/used-diagnoses/${selectedSpecialty}`)
+            .then(r => r.json())
+            .then(d => setUsedDiagnoses(d.diagnoses || []))
+            .catch(() => setUsedDiagnoses([]))
+            .finally(() => setLoadingUsed(false));
+    }, [api, selectedSpecialty]);
 
     useEffect(() => {
         if (!isEdit) return;
@@ -458,6 +471,23 @@ const CreateCase = ({ onBack, editData, presetSpecialtyId, presetSeason, presetE
                                 <option key={sp.id} value={sp.id}>{sp.name}</option>
                             ))}
                         </select>
+                        {selectedSpecialty && (
+                          <div className="flex items-center gap-2 flex-wrap mt-1">
+                            <span className={`text-[10px] font-black px-3 py-1 rounded-lg ${usedDiagnoses.length > 0 ? 'bg-amber-500/10 text-amber-400' : 'bg-[#00C88C]/10 text-[#00C88C]'}`}>
+                              {loadingUsed ? '…' : `${usedDiagnoses.length} diagnostic${usedDiagnoses.length > 1 ? 's' : ''} déjà publié${usedDiagnoses.length > 1 ? 's' : ''}`}
+                            </span>
+                            {usedDiagnoses.length > 0 && (
+                              <details className="text-[10px] text-slate-500 cursor-pointer">
+                                <summary className="hover:text-slate-300">voir la liste</summary>
+                                <ul className="mt-1 space-y-0.5 pl-2">
+                                  {usedDiagnoses.map((d, i) => (
+                                    <li key={i} className="text-slate-500">• {d}</li>
+                                  ))}
+                                </ul>
+                              </details>
+                            )}
+                          </div>
+                        )}
                     </div>
                     <div className="space-y-4">
                         <label className="block text-[10px] font-black text-slate-400 uppercase tracking-[0.3em]">Saison</label>
