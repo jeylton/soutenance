@@ -5,20 +5,22 @@ import 'package:flutter/foundation.dart'
 import 'package:http/http.dart' as http;
 
 class Api {
-  // ⚠️ Mettre à jour cette IP si le backend tourne en local (voir `ipconfig`)
-  static const _localIp = '192.168.100.172';
+  // URL du backend en production (Render)
+  static const _prodUrl = 'https://soutenance-8f7j.onrender.com';
 
   static String get baseUrl {
     const configured = String.fromEnvironment('API_BASE_URL', defaultValue: '');
     if (configured.trim().isNotEmpty) return configured.trim();
 
-    if (kIsWeb) return 'http://localhost:5000';
+    // En production ou sur vrai appareil → backend Render
+    if (kIsWeb) return _prodUrl;
 
     switch (defaultTargetPlatform) {
       case TargetPlatform.android:
-        return 'http://$_localIp:5000';
+        return _prodUrl;
       case TargetPlatform.iOS:
       case TargetPlatform.macOS:
+        return _prodUrl;
       case TargetPlatform.windows:
       case TargetPlatform.linux:
       case TargetPlatform.fuchsia:
