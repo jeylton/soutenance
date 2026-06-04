@@ -736,84 +736,85 @@ const generateCase = async (specialtyName, difficulty, options = {}) => {
     // Le diagnostic est imposé AVANT tout le reste. L'IA construit le patient
     // AUTOUR du diagnostic, pas l'inverse.
     // ──────────────────────────────────────────────────────────────────────────
-    const systemPrompt = `Tu es un professeur de médecine expert. Tu génères des cas cliniques pédagogiques pour étudiants en médecine.
+    // La maladie choisie ci-dessus est la RÉFÉRENCE INTERNE pour générer un cas cohérent.
+    // L'étudiant ne connaît PAS le diagnostic à l'avance — il doit le trouver via la simulation.
+    // Le champ "diagnosis" dans le JSON est stocké en base mais jamais affiché pendant la session.
 
-════════════════════════════════════════════════════════
-DIAGNOSTIC IMPOSÉ : ${forcedDiagnosis || '(aucun — choisis dans la spécialité ci-dessous)'}
+    const systemPrompt = `Tu es un professeur de médecine expert. Tu crées des cas cliniques de simulation pour étudiants en médecine.
+
+═══════════════════════════════════════════════════════════
+MALADIE DE RÉFÉRENCE (usage interne uniquement) : ${forcedDiagnosis || `une pathologie de ${specialtyName}`}
 SPÉCIALITÉ : ${specialtyName}
-DIFFICULTÉ : ${diffLabel} (${difficulty}/5)
-════════════════════════════════════════════════════════
+DIFFICULTÉ : ${diffLabel} (${difficulty}/5)${genderRule ? `\nRÈGLE GENRE : ${genderRule}` : ''}
+═══════════════════════════════════════════════════════════
 
-ORDRE DE TRAVAIL OBLIGATOIRE :
-1. Le diagnostic final EST "${forcedDiagnosis || `une maladie de ${specialtyName}`}". C'est une contrainte absolue, non négociable.
-2. À partir de ce diagnostic, détermine le profil du patient cohérent avec cette maladie :
-   - Genre : adapté à la maladie${genderRule ? ` (RÈGLE : ${genderRule})` : ''}
-   - Âge : adapté à l'épidémiologie de la maladie
-   - Prénom/Nom : africain ou français, cohérent avec le genre
-3. Génère les symptômes, antécédents, examens, traitement TOUS en lien avec ce diagnostic.
-4. Les antécédents familiaux et habitudes de vie doivent être des facteurs de risque DE CETTE MALADIE, pas d'une autre.
-5. Les diagnostics différentiels doivent être des maladies de la même spécialité "${specialtyName}".
+PRINCIPE FONDAMENTAL :
+L'étudiant doit DÉCOUVRIR le diagnostic en interrogeant le patient et en analysant les examens.
+→ Le patient NE CONNAÎT PAS son diagnostic. Il décrit ses symptômes naturellement.
+→ Tous les éléments (symptômes, antécédents, examens, traitement) doivent être cohérents
+   avec la maladie de référence "${forcedDiagnosis || specialtyName}" et UNIQUEMENT avec elle.
 
-INTERDICTIONS ABSOLUES :
-- Interdiction de changer le diagnostic final
-- Interdiction de générer des symptômes/examens/traitements qui ne correspondent pas à "${forcedDiagnosis || specialtyName}"
-- Interdiction de mettre des antécédents familiaux d'une maladie d'une autre spécialité comme facteur causal principal
-- Si la spécialité est gynécologie → patient TOUJOURS féminin
-- Si la spécialité est pédiatrie → patient TOUJOURS entre 0 et 14 ans
+ORDRE DE CONSTRUCTION :
+1. Choisir le profil démographique adapté à cette maladie (âge, genre, terrain).
+2. Construire les symptômes, antécédents, habitudes comme des INDICES cliniques vers ce diagnostic.
+3. Les examens doivent orienter vers ce diagnostic sans le nommer.
+4. Le traitement est celui de référence pour cette maladie.
+5. Les diagnostics différentiels sont des maladies VOISINES de la même spécialité.
 
-Réponds UNIQUEMENT avec un objet JSON valide (sans markdown, sans backticks) :
+INTERDICTIONS :
+- Le patient ne dit JAMAIS "j'ai [maladie]" ni le nom du diagnostic
+- Aucun symptôme, antécédent ou examen d'une autre spécialité ne doit être dominant
+- Aucun traitement d'une autre spécialité
+- Les antécédents familiaux ne doivent pas pointer vers une autre spécialité${genderRule ? `\n- ${genderRule}` : ''}
+
+Réponds UNIQUEMENT avec un JSON valide (sans markdown, sans backticks) :
 {
-  "patient_name": "Prénom Nom fictif africain/français",
-  "age": "nombre adapté à l'épidémiologie de ${forcedDiagnosis || 'la maladie'}",
-  "gender": "Masculin ou Féminin (selon l'épidémiologie de la maladie)",
+  "patient_name": "Prénom Nom africain ou français, cohérent avec le genre",
+  "age": "âge typique pour cette maladie (ex: 58 pour HTA, 25 pour asthme)",
+  "gender": "Masculin ou Féminin selon l'épidémiologie de la maladie",
   "avatar_hint": "male_young | female_young | male_old | female_old | child_male | child_female",
-  "consultation_reason": "Motif de consultation en 1-2 phrases, formulé comme le patient le dirait, en lien avec ${forcedDiagnosis || 'la maladie'}",
-  "initial_symptoms": "Symptômes cliniques de ${forcedDiagnosis || 'la maladie'} en 2-3 phrases",
-  "diagnosis": "${forcedDiagnosis || 'diagnostic appartenant à ' + specialtyName}",
-  "differential_diagnoses": ["maladie de ${specialtyName} proche 1", "maladie de ${specialtyName} proche 2"],
-  "antecedents_perso": ["facteur de risque ou comorbidité cohérente avec ${forcedDiagnosis || 'la maladie'}"],
-  "antecedents_familiaux_pere": ["pathologie du père si pertinent pour cette maladie, sinon Néant"],
-  "antecedents_familiaux_mere": ["pathologie de la mère si pertinent pour cette maladie, sinon Néant"],
-  "allergies": ["allergie si pertinente pour cette maladie, sinon Néant"],
-  "habits": ["habitude de vie qui est facteur de risque de ${forcedDiagnosis || 'la maladie'}"],
+  "consultation_reason": "Ce que le patient dit spontanément (symptôme ressenti, sans diagnostic médical)",
+  "initial_symptoms": "Tableau clinique objectif de la maladie en 2-3 phrases (signes, durée, contexte)",
+  "diagnosis": "Nom médical exact de la maladie (stocké en base, non montré à l'étudiant)",
+  "differential_diagnoses": ["maladie voisine dans ${specialtyName} 1", "maladie voisine dans ${specialtyName} 2"],
+  "antecedents_perso": ["facteur de risque ou comorbidité propre à cette maladie"],
+  "antecedents_familiaux_pere": ["antécédent paternel pertinent pour cette maladie, ou Néant"],
+  "antecedents_familiaux_mere": ["antécédent maternel pertinent pour cette maladie, ou Néant"],
+  "allergies": ["allergie pertinente pour cette maladie ou Néant"],
+  "habits": ["habitude de vie facteur de risque de cette maladie (tabac pour cardio, alcool pour cirrhose...)"],
   "exams": [
-    {"name": "Examen pertinent pour ${forcedDiagnosis || 'la maladie'}", "result": "Résultat BRUT anormal (valeurs/unités)", "is_relevant": true},
-    {"name": "Examen leurre sans rapport avec la maladie", "result": "Résultat BRUT normal", "is_relevant": false}
+    {"name": "Examen clé pour cette maladie", "result": "Résultat BRUT anormal (valeurs+unités)", "is_relevant": true},
+    {"name": "Examen sans rapport (leurre)", "result": "Résultat BRUT normal", "is_relevant": false}
   ],
   "treatment": [
-    {"medication": "DCI du médicament de référence pour ${forcedDiagnosis || 'la maladie'}", "dosage": "dose précise", "frequency": "fréquence et voie", "duration": "durée"}
+    {"medication": "DCI médicament de référence", "dosage": "dose précise", "frequency": "voie + fréquence", "duration": "durée"}
   ],
-  "treatment_notes": "Mesures non médicamenteuses et surveillance spécifiques à ${forcedDiagnosis || 'la maladie'}",
-  "prompt_patient": "Instructions pour l'IA-patient : personnalité, symptômes à révéler progressivement selon ${forcedDiagnosis || 'la maladie'}",
-  "prompt_tuteur": "Points clés à identifier, erreurs fréquentes, diagnostics différentiels de ${specialtyName} à éliminer"
+  "treatment_notes": "Mesures non médicamenteuses, surveillance, éducation thérapeutique propres à cette maladie",
+  "prompt_patient": "Rôle de jeu : le patient décrit ses symptômes naturellement, sans mentionner son diagnostic. Il révèle progressivement des indices selon les questions de l'étudiant.",
+  "prompt_tuteur": "Critères d'évaluation : ce que l'étudiant doit identifier, erreurs fréquentes, diagnostics différentiels à éliminer dans ${specialtyName}"
 }
 
-RÈGLES EXAMENS :
-- ${relevantCount} examens pertinents (résultats BRUTS anormaux, pas d'interprétation)
-- ${decoyCount} examens leurres (résultats normaux, sans rapport avec la maladie)
-- Interdiction des formulations : "compatible avec", "en faveur de", "suggère", "évoque"
+RÈGLES EXAMENS (${relevantCount} pertinents + ${decoyCount} leurres) :
+- Résultats BRUTS uniquement (chiffres, unités) — pas d'interprétation, pas de "compatible avec"
+- Leurres : examens réels mais normaux, sans rapport avec la maladie principale
+- Mélangés dans la liste (pas regroupés)
 
 RÈGLES TRAITEMENT :
-- Médicaments DCI, posologie précise, voie d'administration, durée
-- 1 à 4 médicaments selon la pathologie
-- Traitement de référence spécifique à "${forcedDiagnosis || specialtyName}"
+- DCI, posologie, voie, durée précis
+- 1 à 4 médicaments, traitement de référence pour cette maladie spécifiquement
+${difficulty >= 3 ? '\nDIFFICULTÉ AVANCÉE : présentation partiellement atypique, diagnostics différentiels proches' : ''}
+${difficulty >= 4 ? '\nDIFFICULTÉ EXPERT : examens leurres légèrement anormaux, symptômes trompeurs' : ''}
 
-RÈGLES DIAGNOSTICS DIFFÉRENTIELS :
-- Tous dans la spécialité "${specialtyName}"
-- ${diffDiagCount} diagnostics différentiels qui peuvent mimer "${forcedDiagnosis || 'la maladie'}"
-${difficulty >= 3 ? '- Présentation partiellement atypique pour induire un raisonnement différentiel' : ''}
-${difficulty >= 4 ? '- Certains examens leurres légèrement anormaux pour complexifier le raisonnement' : ''}
-
-Réponds UNIQUEMENT avec le JSON. Aucun texte avant ou après.`;
+Réponds UNIQUEMENT avec le JSON.`;
 
     const userMessage = [
         forcedDiagnosis
-            ? `DIAGNOSTIC FINAL (immuable) : "${forcedDiagnosis}" — Spécialité : ${specialtyName} — Difficulté ${difficulty}/5`
-            : `Génère un cas clinique en ${specialtyName}, difficulté ${difficulty}/5. Choisis une maladie de cette spécialité.`,
+            ? `Maladie de référence : "${forcedDiagnosis}" | Spécialité : ${specialtyName} | Difficulté ${difficulty}/5\nGénère le cas clinique de simulation autour de cette maladie.`
+            : `Génère un cas clinique de simulation en ${specialtyName}, difficulté ${difficulty}/5.\nChoisis une maladie appartenant strictement à cette spécialité.`,
         excludedDiagnoses.length > 0
-            ? `Maladies déjà utilisées (INTERDITES) : ${excludedDiagnoses.join(' | ')}`
+            ? `Maladies déjà utilisées pour cette spécialité (à ne pas répéter) : ${excludedDiagnoses.join(' | ')}`
             : '',
-        generationSeed ? `Graine de variation : ${generationSeed}` : '',
+        generationSeed ? `Graine : ${generationSeed}` : '',
     ].filter(Boolean).join('\n');
 
     const primary = getPrimaryLlmProvider();

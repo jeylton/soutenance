@@ -483,70 +483,15 @@ router.post('/generate-case', async (req, res) => {
     let caseData = null;
     let lastDiagnosisKey = '';
 
-    const candidatePoolByDifficulty = {
-      1: [
-        'Hypertension artérielle essentielle',
-        'Asthme aigu simple',
-        'Otite moyenne aiguë',
-        'Vaginose bactérienne',
-        'Migraine sans aura',
-        'Infection urinaire basse',
-      ],
-      2: [
-        'Insuffisance cardiaque gauche décompensée',
-        'Pneumonie communautaire lobaire',
-        'Gastro-entérite aiguë simple',
-        'Dysménorrhée primaire',
-        'Vertige positionnel paroxystique bénin',
-        'Colique néphrétique simple',
-      ],
-      3: [
-        'Syndrome coronarien aigu sans sus-décalage ST',
-        'Exacerbation aiguë de BPCO',
-        'Bronchiolite modérée',
-        'Maladie inflammatoire pelvienne',
-        'Syndrome méningé viral',
-        'Pyélonéphrite aiguë',
-      ],
-      4: [
-        'Fibrillation auriculaire rapide',
-        'Embolie pulmonaire intermédiaire',
-        'Grossesse extra-utérine non rompue',
-        'AVC ischémique sylvien',
-        'Insuffisance rénale aiguë fonctionnelle',
-        'Méningite bactérienne pédiatrique',
-      ],
-      5: [
-        'Dissection aortique de type B',
-        'Tamponnade péricardique',
-        'Pneumothorax compressif',
-        'SDRA débutant',
-        'Pré-éclampsie sévère',
-        'Hémorragie sous-arachnoïdienne',
-        'Encéphalite herpétique',
-        'Hyperkaliémie menaçante sur insuffisance rénale',
-      ],
-    };
-    const diff = Math.min(5, Math.max(1, Number(difficulty) || 1));
-    const difficultyPool = candidatePoolByDifficulty[diff] || candidatePoolByDifficulty[3];
-    const filteredDifficultyPool = difficultyPool.filter(
-      (d) => !excludedDiagnoses.some((e) => normalizeDiagnosisKey(e) === normalizeDiagnosisKey(d)),
-    );
-
-    const pickDiagnosisForAttempt = (pool, attempt) => {
-      if (!Array.isArray(pool) || pool.length === 0) return '';
-      const baseIndex = Math.floor(Math.random() * pool.length);
-      const offset = Math.max(0, (Number(attempt) || 1) - 1);
-      return pool[(baseIndex + offset) % pool.length];
-    };
-
-    const maxAttempts = 8;
+    // Le service llmService.js sélectionne la maladie depuis la matrice spécifique
+    // à la spécialité (specialty_name). On ne force pas de diagnostic ici —
+    // c'est le service qui choisit une maladie cohérente avec la spécialité,
+    // et l'étudiant doit la découvrir via la simulation.
+    const maxAttempts = 4;
     for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
-      const forcedDiagnosis = pickDiagnosisForAttempt(filteredDifficultyPool, attempt);
-
       caseData = await generateCase(specialty_name, difficulty, {
-        excludedDiagnoses,
-        forcedDiagnosis,
+        excludedDiagnoses,          // maladies déjà utilisées → éviter les répétitions
+        forcedDiagnosis: '',        // laissé vide : le service choisit depuis la matrice
         generationSeed: `${Date.now()}-${Math.random()}-a${attempt}`,
       });
 
