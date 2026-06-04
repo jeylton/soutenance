@@ -1,6 +1,7 @@
 ﻿import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_animate/flutter_animate.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:lucide_icons/lucide_icons.dart';
@@ -28,6 +29,10 @@ class _SimulationScreenState extends State<SimulationScreen> {
   static const String _talkingGifAsset = 'assets/gif/patient_talking.gif';
   bool _didSpeakInitialMessage = false;
 
+  // Bloc-notes de l'étudiant (persiste pendant la simulation)
+  final TextEditingController _notesController = TextEditingController();
+  bool _hasNotes = false;
+
   // Speech-to-text
   final stt.SpeechToText _speech = stt.SpeechToText();
   bool _speechAvailable = false;
@@ -40,6 +45,8 @@ class _SimulationScreenState extends State<SimulationScreen> {
   // Text-to-speech (patient voice)
   final FlutterTts _tts = FlutterTts();
   final AudioPlayer _audioPlayer = AudioPlayer();
+
+  static const double _elevenLabsPlaybackRate = 1.12;
 
   @override
   void initState() {
@@ -64,7 +71,19 @@ class _SimulationScreenState extends State<SimulationScreen> {
     final reason = (caseData?['consultation_reason'] ?? '').toString().trim();
     if (reason.isEmpty) return;
 
-    final firstMessage = 'Bonjour Docteur. $reason';
+    final name = (caseData?['patient_name'] ?? '').toString().trim();
+    final medical = caseData?['medical_history'] is Map
+        ? Map<String, dynamic>.from(caseData!['medical_history'] as Map)
+        : <String, dynamic>{};
+    final age = medical['age']?.toString().trim() ?? '';
+
+    // Message d'introduction naturel avec identité du patient
+    final buf = StringBuffer('Bonjour Docteur.');
+    if (name.isNotEmpty) buf.write(' Je m\'appelle $name.');
+    if (age.isNotEmpty) buf.write(' J\'ai $age ans.');
+    buf.write(' $reason');
+
+    final firstMessage = buf.toString();
     _didSpeakInitialMessage = true;
 
     final sessionId = sessionState.sessionId;
@@ -192,72 +211,96 @@ class _SimulationScreenState extends State<SimulationScreen> {
 
     // Device TTS tuning: free voices, adapted to avatar age + gender.
     double pitch = 1.0;
-    double rate = 0.5;
+    double rate = 0.56;
     if (isChild && isFemale) {
       pitch = 1.35;
-      rate = 0.58;
+      rate = 0.64;
     } else if (isChild) {
       pitch = 1.24;
-      rate = 0.56;
+      rate = 0.62;
     } else if (isSenior && isFemale) {
       pitch = 1.0;
-      rate = 0.46;
+      rate = 0.5;
     } else if (isSenior) {
       pitch = 0.78;
-      rate = 0.44;
+      rate = 0.48;
     } else if (isFemale) {
       pitch = 1.12;
-      rate = 0.52;
+      rate = 0.58;
     } else {
       pitch = 0.92;
-      rate = 0.5;
+      rate = 0.56;
     }
 
     await _tts.setPitch(pitch);
     await _tts.setSpeechRate(rate);
 
-    // Try to pick a matching voice on platforms that support it
+    // Sélection de voix native selon le profil du patient
     try {
       final voices = await _tts.getVoices;
       if (voices is List) {
-        final frVoices =
-            voices.where((v) {
-              final locale =
-                  (v['locale'] ?? v['language'] ?? '').toString().toLowerCase();
-              return locale.startsWith('fr');
-            }).toList();
+        // Garder uniquement les voix françaises
+        final frVoices = voices.where((v) {
+          final locale = (v['locale'] ?? v['language'] ?? '').toString().toLowerCase();
+          return locale.startsWith('fr');
+        }).toList();
 
         if (frVoices.isNotEmpty) {
-          final ageHints =
-              isChild
-                  ? ['child', 'kid', 'young', 'jeune', 'enfant']
-                  : isSenior
-                  ? ['senior', 'old', 'elder', 'aged', 'vieux']
-                  : ['adult'];
-          final genderHints =
-              isFemale
-                  ? ['female', 'woman', 'femme']
-                  : ['male', 'man', 'homme'];
+          // Patterns de genre — couvre Android (fr-fr-x-fra#female_1) et iOS (Amelie, Thomas)
+          final femalePatterns = ['female', 'woman', 'femme', 'féminin', '#female', 'amélie', 'amelie', 'audrey', 'marie', 'julie'];
+          final malePatterns   = ['male', 'man', 'homme', 'masculin', '#male', 'thomas', 'pierre', 'nicolas', 'julien'];
+          final childPatterns  = ['child', 'kid', 'young', 'enfant', 'jeune', 'junior'];
+          final seniorPatterns = ['senior', 'old', 'elder', 'aged', 'vieux', 'mature'];
 
           int scoreVoice(Map<dynamic, dynamic> v) {
-            final name = (v['name'] ?? '').toString().toLowerCase();
+            final name   = (v['name']   ?? '').toString().toLowerCase();
+            final locale = (v['locale'] ?? '').toString().toLowerCase();
+            final combined = '$name $locale';
             int score = 0;
-            if (genderHints.any((h) => name.contains(h))) score += 4;
-            if (ageHints.any((h) => name.contains(h))) score += 2;
+
+            // Genre (priorité haute)
+            final wantedGender = isFemale ? femalePatterns : malePatterns;
+            if (wantedGender.any((p) => combined.contains(p))) score += 8;
+
+            // Âge (bonus secondaire)
+            if (isChild  && childPatterns.any((p)  => combined.contains(p))) score += 4;
+            if (isSenior && seniorPatterns.any((p) => combined.contains(p))) score += 4;
+
+            // Malus si genre opposé détecté clairement
+            final oppositeGender = isFemale ? malePatterns : femalePatterns;
+            if (oppositeGender.any((p) => combined.contains(p))) score -= 6;
+
             return score;
           }
 
           frVoices.sort((a, b) => scoreVoice(b).compareTo(scoreVoice(a)));
-          final match = frVoices.first;
+
+          // Si aucune voix ne discrimine le genre (score = 0), prendre une voix par index
+          // pour que les profils différents aient au moins des voix différentes
+          final best = frVoices.first;
+          final bestScore = scoreVoice(best as Map<dynamic, dynamic>);
+
+          Map<dynamic, dynamic> chosen;
+          if (bestScore <= 0 && frVoices.length > 1) {
+            // Répartir par profil: femme→index 1, homme→index 0, enfant→dernier disponible
+            final idx = isChild
+                ? frVoices.length - 1
+                : isFemale
+                ? (frVoices.length > 1 ? 1 : 0)
+                : 0;
+            chosen = frVoices[idx] as Map<dynamic, dynamic>;
+          } else {
+            chosen = best;
+          }
 
           await _tts.setVoice({
-            'name': match['name'],
-            'locale': match['locale'] ?? 'fr-FR',
+            'name':   (chosen['name']   ?? '').toString(),
+            'locale': (chosen['locale'] ?? 'fr-FR').toString(),
           });
         }
       }
     } catch (_) {
-      // Voice selection is best-effort; pitch handles the rest
+      // Voice selection is best-effort; pitch/rate différencient les profils
     }
 
     _tts.setStartHandler(() {
@@ -268,7 +311,18 @@ class _SimulationScreenState extends State<SimulationScreen> {
     });
     _tts.setErrorHandler((msg) {
       debugPrint('TTS error: $msg');
+      if (mounted) setState(() => _isPatientSpeaking = false);
     });
+  }
+
+  Future<void> _stopPatientSpeech() async {
+    try {
+      await _audioPlayer.stop();
+    } catch (_) {}
+    try {
+      await _tts.stop();
+    } catch (_) {}
+    if (mounted) setState(() => _isPatientSpeaking = false);
   }
 
   Future<void> _speakReply(String text) async {
@@ -279,6 +333,7 @@ class _SimulationScreenState extends State<SimulationScreen> {
             .replaceAll(RegExp(r'\s+'), ' ')
             .trim();
     if (cleaned.isNotEmpty) {
+      if (_isListening) return;
       if (mounted) setState(() => _isPatientSpeaking = true);
 
       final sessionState = Provider.of<SessionState>(context, listen: false);
@@ -290,6 +345,11 @@ class _SimulationScreenState extends State<SimulationScreen> {
           final audioBytes = await Api.patientVoiceAudio(caseId, cleaned);
           if (audioBytes.isNotEmpty) {
             await _audioPlayer.stop();
+            try {
+              await _audioPlayer.setPlaybackRate(_elevenLabsPlaybackRate);
+            } catch (_) {
+              // Playback rate is best-effort (platform support may vary).
+            }
             _audioPlayer.onPlayerComplete.first.then((_) {
               if (mounted) setState(() => _isPatientSpeaking = false);
             });
@@ -393,6 +453,9 @@ class _SimulationScreenState extends State<SimulationScreen> {
       );
       return;
     }
+
+    // Ensure the patient is not speaking while the user is answering.
+    await _stopPatientSpeech();
     setState(() {
       _isListening = true;
       _spokenText = '';
@@ -420,9 +483,25 @@ class _SimulationScreenState extends State<SimulationScreen> {
   }
 
   Future<void> _sendVoiceMessage(String text) async {
+    final sessionState = Provider.of<SessionState>(context, listen: false);
+
+    // Vérifier la limite de questions
+    if (sessionState.isQuestionLimitReached) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: const Text('Limite de questions atteinte. Passez aux examens ou à la conclusion.'),
+          backgroundColor: const Color(0xFFEF4444),
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        ),
+      );
+      return;
+    }
+
     setState(() => _isWaitingReply = true);
+    sessionState.incrementQuestionCount();
+
     try {
-      final sessionState = Provider.of<SessionState>(context, listen: false);
       final caseId = sessionState.caseId;
       final sessionId = sessionState.sessionId;
       if (sessionId != null) {
@@ -437,15 +516,14 @@ class _SimulationScreenState extends State<SimulationScreen> {
           _lastPatientReply = reply;
           _isWaitingReply = false;
         });
-        // Patient speaks the reply aloud
         _speakReply(reply);
       }
     } catch (e) {
       if (mounted) {
         setState(() => _isWaitingReply = false);
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text('Erreur: $e')));
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Erreur: $e')),
+        );
       }
     }
   }
@@ -457,6 +535,7 @@ class _SimulationScreenState extends State<SimulationScreen> {
     _audioPlayer.stop();
     _audioPlayer.dispose();
     _tts.stop();
+    _notesController.dispose();
     super.dispose();
   }
 
@@ -526,6 +605,12 @@ class _SimulationScreenState extends State<SimulationScreen> {
                       alignment: Alignment.topCenter,
                       child: _buildHeader(context),
                     ).animate().fadeIn(duration: 600.ms).slideY(begin: -0.2),
+
+                    // Barre patient fixe (nom, âge, motif — toujours visible)
+                    _buildPatientInfoBar()
+                        .animate()
+                        .fadeIn(duration: 500.ms, delay: 150.ms)
+                        .slideY(begin: -0.3),
 
                     // Zone centrale - scrollable pour éviter overflow
                     Expanded(
@@ -661,6 +746,52 @@ class _SimulationScreenState extends State<SimulationScreen> {
           Row(
             mainAxisSize: MainAxisSize.min,
             children: [
+              // Compteur de questions
+              Consumer<SessionState>(
+                builder: (context, state, _) {
+                  final remaining = state.questionsRemaining;
+                  final isLow = remaining <= 5;
+                  final isOut = remaining == 0;
+                  return Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+                    decoration: BoxDecoration(
+                      color: isOut
+                          ? Colors.red.withValues(alpha: 0.85)
+                          : isLow
+                              ? const Color(0xFFFFF3CD)
+                              : Colors.black.withValues(alpha: 0.5),
+                      borderRadius: BorderRadius.circular(16),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withValues(alpha: 0.08),
+                          blurRadius: 8,
+                          offset: const Offset(0, 3),
+                        ),
+                      ],
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                          LucideIcons.messageCircle,
+                          size: 15,
+                          color: isOut ? Colors.white : isLow ? const Color(0xFF92400E) : Colors.white70,
+                        ),
+                        const SizedBox(width: 4),
+                        Text(
+                          '$remaining',
+                          style: GoogleFonts.outfit(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w900,
+                            color: isOut ? Colors.white : isLow ? const Color(0xFF92400E) : Colors.white,
+                          ),
+                        ),
+                      ],
+                    ),
+                  );
+                },
+              ),
+              const SizedBox(width: 8),
               // Hint button
               Consumer<SessionState>(
                 builder: (context, state, _) {
@@ -723,6 +854,27 @@ class _SimulationScreenState extends State<SimulationScreen> {
                   );
                 },
               ),
+              // Bouton achat d'indices
+              GestureDetector(
+                onTap: _showHintPurchase,
+                child: Container(
+                  width: 26,
+                  height: 26,
+                  margin: const EdgeInsets.only(left: 2),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF10B981),
+                    shape: BoxShape.circle,
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withValues(alpha: 0.1),
+                        blurRadius: 4,
+                        offset: const Offset(0, 2),
+                      ),
+                    ],
+                  ),
+                  child: const Icon(Icons.add, color: Colors.white, size: 16),
+                ),
+              ),
               const SizedBox(width: 8),
               // Clinical File Button
               GestureDetector(
@@ -774,6 +926,108 @@ class _SimulationScreenState extends State<SimulationScreen> {
             ],
           ),
         ],
+      ),
+    );
+  }
+
+  Future<void> _showHintPurchase() async {
+    final state = Provider.of<SessionState>(context, listen: false);
+    final isFr = state.isFrench;
+
+    await showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (sheetCtx) => Container(
+        padding: const EdgeInsets.fromLTRB(20, 16, 20, 32),
+        decoration: const BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 40, height: 4,
+              decoration: BoxDecoration(color: const Color(0xFFE2E8F0), borderRadius: BorderRadius.circular(2)),
+            ),
+            const SizedBox(height: 16),
+            Text(
+              isFr ? 'Acheter des indices' : 'Buy Hints',
+              style: GoogleFonts.outfit(fontSize: 18, fontWeight: FontWeight.w900, color: const Color(0xFF1E293B)),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              isFr ? 'Utilisez vos XP pour obtenir des indices' : 'Use your XP to get hints',
+              style: GoogleFonts.outfit(fontSize: 13, color: const Color(0xFF94A3B8)),
+            ),
+            const SizedBox(height: 20),
+            _buildHintPackOption(sheetCtx, 'hint_pack_3', '💡', isFr ? '3 Indices' : '3 Hints', '150 XP', state),
+            const SizedBox(height: 10),
+            _buildHintPackOption(sheetCtx, 'hint_pack_10', '🔦', isFr ? '10 Indices' : '10 Hints', '400 XP', state),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildHintPackOption(
+    BuildContext sheetCtx,
+    String itemId,
+    String icon,
+    String label,
+    String price,
+    SessionState state,
+  ) {
+    return GestureDetector(
+      onTap: () async {
+        Navigator.pop(sheetCtx);
+        try {
+          final result = await Api.buyShopItem(itemId);
+          if (!mounted) return;
+          if (result['error'] != null) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(content: Text(result['error'].toString()), backgroundColor: Colors.red),
+            );
+          } else {
+            final newBalance = (result['hintBalance'] ?? state.hintBalance) as int;
+            state.updateProfile(hintBalance: newBalance);
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text(state.isFrench ? '$label achetés !' : '$label purchased!'),
+                backgroundColor: const Color(0xFF10B981),
+              ),
+            );
+          }
+        } catch (_) {
+          if (!mounted) return;
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text(state.isFrench ? 'Erreur d\'achat' : 'Purchase error'), backgroundColor: Colors.red),
+          );
+        }
+      },
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+        decoration: BoxDecoration(
+          color: const Color(0xFFF0FDF4),
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: const Color(0xFFBBF7D0)),
+        ),
+        child: Row(
+          children: [
+            Text(icon, style: const TextStyle(fontSize: 28)),
+            const SizedBox(width: 14),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(label, style: GoogleFonts.outfit(fontSize: 15, fontWeight: FontWeight.w800, color: const Color(0xFF1E293B))),
+                  Text(price, style: GoogleFonts.outfit(fontSize: 12, color: const Color(0xFF10B981), fontWeight: FontWeight.w700)),
+                ],
+              ),
+            ),
+            const Icon(Icons.arrow_forward_ios, size: 14, color: Color(0xFF94A3B8)),
+          ],
+        ),
       ),
     );
   }
@@ -978,6 +1232,7 @@ class _SimulationScreenState extends State<SimulationScreen> {
     return Image.network(
       url,
       fit: BoxFit.cover,
+      gaplessPlayback: true,
       errorBuilder:
           (context, error, stackTrace) => Container(
             color: AppColors.iconBlueBg,
@@ -995,23 +1250,123 @@ class _SimulationScreenState extends State<SimulationScreen> {
   }
 
   Widget _buildPatientVisual(String avatarUrl, double size) {
-    final isPatientTurn = _isWaitingReply || _isPatientSpeaking;
-    final isGifAvatar = avatarUrl.toLowerCase().endsWith('.gif');
+    final avatar = _buildAvatarWidget(avatarUrl, size);
 
-    if (isGifAvatar) {
-      return _buildAvatarWidget(avatarUrl, size);
-    }
-
-    if (!isPatientTurn) {
-      return _buildAvatarWidget(avatarUrl, size);
-    }
-
-    return Image.asset(
+    // When speaking: try the talking GIF, fall back to avatar on error.
+    // Each rebuild gets a fresh attempt — no permanent disabled state.
+    final speakingWidget = Image.asset(
       _talkingGifAsset,
       fit: BoxFit.cover,
-      errorBuilder: (context, error, stackTrace) {
-        return _buildAvatarWidget(avatarUrl, size);
-      },
+      gaplessPlayback: true,
+      errorBuilder: (_, __, ___) => avatar,
+    );
+
+    return IgnorePointer(
+      child: AnimatedSwitcher(
+        duration: const Duration(milliseconds: 150),
+        switchInCurve: Curves.easeOut,
+        switchOutCurve: Curves.easeIn,
+        child: _isPatientSpeaking
+            ? KeyedSubtree(key: const ValueKey('speaking'), child: speakingWidget)
+            : KeyedSubtree(key: const ValueKey('idle'), child: avatar),
+      ),
+    );
+  }
+
+  Widget _buildPatientInfoBar() {
+    final caseData = Provider.of<SessionState>(context, listen: false).caseData;
+    final name = (caseData?['patient_name'] ?? '').toString().trim();
+    final medical = caseData?['medical_history'] is Map
+        ? Map<String, dynamic>.from(caseData!['medical_history'] as Map)
+        : <String, dynamic>{};
+    final age = medical['age']?.toString().trim() ?? '';
+    final gender = (medical['gender'] ?? '').toString().trim();
+    final reason = (caseData?['consultation_reason'] ?? '').toString().trim();
+
+    if (name.isEmpty && reason.isEmpty) return const SizedBox.shrink();
+
+    return Container(
+      margin: const EdgeInsets.fromLTRB(16, 4, 16, 0),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.85),
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.06),
+            blurRadius: 10,
+            offset: const Offset(0, 3),
+          ),
+        ],
+      ),
+      child: Row(
+        children: [
+          // Icône patient
+          Container(
+            width: 36,
+            height: 36,
+            decoration: BoxDecoration(
+              color: AppColors.primary.withValues(alpha: 0.12),
+              shape: BoxShape.circle,
+            ),
+            child: const Icon(LucideIcons.user, size: 18, color: AppColors.primary),
+          ),
+          const SizedBox(width: 10),
+
+          // Infos
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // Nom + âge + genre
+                Text(
+                  [
+                    if (name.isNotEmpty) name,
+                    if (age.isNotEmpty) '$age ans',
+                    if (gender.isNotEmpty) gender,
+                  ].join(' • '),
+                  style: GoogleFonts.outfit(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w800,
+                    color: const Color(0xFF1E293B),
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                const SizedBox(height: 2),
+                // Motif de consultation
+                Text(
+                  reason.isNotEmpty ? reason : 'Consultation',
+                  style: GoogleFonts.outfit(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w500,
+                    color: const Color(0xFF64748B),
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ],
+            ),
+          ),
+
+          // Badge "Patient"
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+            decoration: BoxDecoration(
+              color: AppColors.primary.withValues(alpha: 0.1),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Text(
+              'Patient',
+              style: GoogleFonts.outfit(
+                fontSize: 10,
+                fontWeight: FontWeight.w800,
+                color: AppColors.primary,
+              ),
+            ),
+          ),
+        ],
+      ),
     );
   }
 
@@ -1383,21 +1738,189 @@ class _SimulationScreenState extends State<SimulationScreen> {
     );
   }
 
+  void _openNotesSheet() {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (_) => Padding(
+        padding: EdgeInsets.only(
+          bottom: MediaQuery.of(context).viewInsets.bottom,
+        ),
+        child: Container(
+          height: MediaQuery.of(context).size.height * 0.7,
+          decoration: const BoxDecoration(
+            color: Color(0xFFFFFBEB),
+            borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+          ),
+          child: Column(
+            children: [
+              // Handle
+              Container(
+                margin: const EdgeInsets.only(top: 12, bottom: 4),
+                width: 40,
+                height: 4,
+                decoration: BoxDecoration(
+                  color: const Color(0xFFE2E8F0),
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+              // Header
+              Padding(
+                padding: const EdgeInsets.fromLTRB(20, 12, 20, 8),
+                child: Row(
+                  children: [
+                    Icon(LucideIcons.pencil, color: const Color(0xFFD97706), size: 22),
+                    const SizedBox(width: 10),
+                    Text(
+                      'Mes notes',
+                      style: GoogleFonts.outfit(
+                        fontSize: 20,
+                        fontWeight: FontWeight.w900,
+                        color: const Color(0xFF1E293B),
+                      ),
+                    ),
+                    const Spacer(),
+                    GestureDetector(
+                      onTap: () => Navigator.pop(context),
+                      child: Container(
+                        width: 32,
+                        height: 32,
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFE2E8F0),
+                          shape: BoxShape.circle,
+                        ),
+                        child: const Icon(LucideIcons.x, size: 16, color: Color(0xFF64748B)),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const Divider(height: 1, color: Color(0xFFE2E8F0)),
+              // Zone de texte
+              Expanded(
+                child: TextField(
+                  controller: _notesController,
+                  maxLines: null,
+                  expands: true,
+                  autofocus: true,
+                  style: GoogleFonts.outfit(
+                    fontSize: 15,
+                    color: const Color(0xFF1E293B),
+                    height: 1.7,
+                  ),
+                  decoration: InputDecoration(
+                    hintText: 'Hypothèses diagnostiques, examens à demander, signes importants...',
+                    hintStyle: GoogleFonts.outfit(
+                      fontSize: 14,
+                      color: const Color(0xFFCBD5E1),
+                    ),
+                    border: InputBorder.none,
+                    contentPadding: const EdgeInsets.fromLTRB(20, 16, 20, 16),
+                  ),
+                  onChanged: (v) {
+                    final hasContent = v.trim().isNotEmpty;
+                    if (hasContent != _hasNotes) {
+                      setState(() => _hasNotes = hasContent);
+                    }
+                  },
+                ),
+              ),
+              // Pied de page
+              Container(
+                padding: const EdgeInsets.fromLTRB(20, 8, 20, 20),
+                child: Text(
+                  'Ces notes sont privées et ne seront pas soumises avec votre diagnostic.',
+                  textAlign: TextAlign.center,
+                  style: GoogleFonts.outfit(
+                    fontSize: 11,
+                    color: const Color(0xFF94A3B8),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget _buildBottomActions() {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 24),
-      child: Row(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
         children: [
+          // Bouton Notes (petit, au-dessus des boutons principaux)
+          GestureDetector(
+            onTap: _openNotesSheet,
+            child: Container(
+              margin: const EdgeInsets.only(bottom: 10),
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+              decoration: BoxDecoration(
+                color: _hasNotes
+                    ? const Color(0xFFFEF3C7)
+                    : Colors.white.withValues(alpha: 0.7),
+                borderRadius: BorderRadius.circular(20),
+                border: Border.all(
+                  color: _hasNotes
+                      ? const Color(0xFFFBBF24)
+                      : Colors.white.withValues(alpha: 0.4),
+                ),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(
+                    LucideIcons.pencil,
+                    size: 14,
+                    color: _hasNotes
+                        ? const Color(0xFFD97706)
+                        : const Color(0xFF64748B),
+                  ),
+                  const SizedBox(width: 6),
+                  Text(
+                    _hasNotes ? 'Notes (en cours)' : 'Ouvrir le bloc-notes',
+                    style: GoogleFonts.outfit(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w700,
+                      color: _hasNotes
+                          ? const Color(0xFFD97706)
+                          : const Color(0xFF64748B),
+                    ),
+                  ),
+                  if (_hasNotes) ...[
+                    const SizedBox(width: 6),
+                    Container(
+                      width: 7,
+                      height: 7,
+                      decoration: const BoxDecoration(
+                        color: Color(0xFFF59E0B),
+                        shape: BoxShape.circle,
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+          ),
+          Row(
+            children: [
           // Examens button
           Expanded(
             child: GestureDetector(
-              onTap: () {
-                showModalBottomSheet(
+              onTap: () async {
+                final ordered = await showModalBottomSheet<bool>(
                   context: context,
                   isScrollControlled: true,
                   backgroundColor: Colors.transparent,
                   builder: (_) => const ExamOrderSheet(),
                 );
+
+                if (!mounted) return;
+                if (ordered == true) {
+                  await _openExamResults();
+                }
               },
               child: Container(
                 height: 64,
@@ -1442,11 +1965,7 @@ class _SimulationScreenState extends State<SimulationScreen> {
           // Diagnostic button
           Expanded(
             child: GestureDetector(
-              onTap: () {
-                Navigator.of(context).push(
-                  MaterialPageRoute(builder: (_) => const ExamResultsScreen()),
-                );
-              },
+              onTap: _openExamResults,
               child: Container(
                 height: 64,
                 decoration: BoxDecoration(
@@ -1484,6 +2003,120 @@ class _SimulationScreenState extends State<SimulationScreen> {
           ),
         ],
       ),
+      ],
+    ),
+  );
+  }
+
+  Future<void> _openExamResults() async {
+    final completed = await Navigator.of(
+      context,
+    ).push<bool>(MaterialPageRoute(builder: (_) => const ExamResultsScreen()));
+    if (!mounted) return;
+
+    if (completed == true) {
+      await _showEpisodeCompletedCelebration();
+      if (!mounted) return;
+      Navigator.of(context).pop(true);
+    }
+  }
+
+  Future<void> _showEpisodeCompletedCelebration() async {
+    try {
+      SystemSound.play(SystemSoundType.alert);
+    } catch (_) {}
+    try {
+      HapticFeedback.heavyImpact();
+    } catch (_) {}
+
+    await showGeneralDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      barrierColor: Colors.black.withValues(alpha: 0.25),
+      transitionDuration: const Duration(milliseconds: 160),
+      pageBuilder: (dialogContext, animation, secondaryAnimation) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          Future.delayed(const Duration(milliseconds: 850), () {
+            if (Navigator.of(dialogContext).canPop()) {
+              Navigator.of(dialogContext).pop();
+            }
+          });
+        });
+
+        return Center(
+          child: Material(
+            color: Colors.transparent,
+            child: Container(
+                  width: 280,
+                  padding: const EdgeInsets.fromLTRB(18, 18, 18, 16),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(22),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withValues(alpha: 0.18),
+                        blurRadius: 22,
+                        offset: const Offset(0, 14),
+                      ),
+                    ],
+                  ),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Container(
+                        width: 74,
+                        height: 74,
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFEAF7FF),
+                          borderRadius: BorderRadius.circular(22),
+                          border: Border.all(
+                            color: AppColors.primary.withValues(alpha: 0.25),
+                            width: 2,
+                          ),
+                        ),
+                        child: const Icon(
+                          LucideIcons.star,
+                          color: Color(0xFFF2B503),
+                          size: 34,
+                        ),
+                      ).animate().scale(
+                        duration: const Duration(milliseconds: 260),
+                        curve: Curves.easeOutBack,
+                      ),
+                      const SizedBox(height: 12),
+                      Text(
+                        'Épisode terminé',
+                        textAlign: TextAlign.center,
+                        style: GoogleFonts.outfit(
+                          fontSize: 18,
+                          fontWeight: FontWeight.w900,
+                          color: const Color(0xFF0F172A),
+                        ),
+                      ),
+                      const SizedBox(height: 6),
+                      Text(
+                        'Retour au parcours…',
+                        textAlign: TextAlign.center,
+                        style: GoogleFonts.outfit(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w700,
+                          color: const Color(0xFF64748B),
+                        ),
+                      ),
+                    ],
+                  ),
+                )
+                .animate()
+                .fadeIn(duration: const Duration(milliseconds: 160))
+                .scale(
+                  begin: const Offset(0.98, 0.98),
+                  end: const Offset(1, 1),
+                  duration: const Duration(milliseconds: 160),
+                  curve: Curves.easeOut,
+                ),
+          ),
+        );
+      },
     );
   }
 }

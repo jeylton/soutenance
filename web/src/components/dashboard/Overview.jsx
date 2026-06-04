@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { TrendingUp, Users, BookOpen, FileText, Star, Activity, Clock } from 'lucide-react';
+import { TrendingUp, Users, BookOpen, FileText, Star, Activity, Clock, AlertTriangle, Zap, CheckCircle2 } from 'lucide-react';
 
 const StatCard = ({ label, value, icon: Icon }) => (
     <div className="stat-card relative overflow-hidden group">
@@ -46,6 +46,7 @@ const CaseItem = ({ title, difficulty, status, updatedAt }) => (
 );
 
 const Overview = () => {
+    const api = import.meta.env.VITE_API_URL;
     const [metrics, setMetrics] = useState({
         mobile_users: 0,
         clinics: 0,
@@ -56,14 +57,50 @@ const Overview = () => {
         recent_cases: [],
         specialty_list: [],
     });
+    const [sessions, setSessions] = useState([]);
+    const [lastUpdated, setLastUpdated] = useState(null);
 
-    useEffect(() => {
-        const api = import.meta.env.VITE_API_URL;
+    const loadAll = () => {
         fetch(`${api}/api/metrics`)
             .then((res) => res.json())
-            .then((data) => setMetrics((prev) => ({ ...prev, ...data })))
+            .then((data) => { setMetrics((prev) => ({ ...prev, ...data })); setLastUpdated(new Date()); })
             .catch(() => {});
+        fetch(`${api}/api/sessions`)
+            .then(r => r.json())
+            .then(d => setSessions(d.sessions || []))
+            .catch(() => {});
+    };
+
+    useEffect(() => {
+        loadAll();
+        const interval = setInterval(loadAll, 30000); // Refresh toutes les 30s
+        return () => clearInterval(interval);
     }, []);
+
+    // Stats calculées depuis les sessions
+    const today = new Date().toDateString();
+    const sessionsToday = sessions.filter(s => new Date(s.created_at).toDateString() === today).length;
+    const completedSessions = sessions.filter(s => s.score != null);
+    const avgScore = completedSessions.length > 0
+        ? (completedSessions.reduce((sum, s) => sum + (s.score || 0), 0) / completedSessions.length).toFixed(1)
+        : null;
+    const passRate = completedSessions.length > 0
+        ? Math.round((completedSessions.filter(s => s.score >= 10).length / completedSessions.length) * 100)
+        : null;
+
+    // Top 3 cas les plus échoués (score moyen le plus bas)
+    const casesScoreMap = {};
+    completedSessions.forEach(s => {
+        if (!s.case_id) return;
+        if (!casesScoreMap[s.case_id]) casesScoreMap[s.case_id] = { total: 0, count: 0, name: s.cases?.consultation_reason || `Cas #${s.case_id}` };
+        casesScoreMap[s.case_id].total += s.score;
+        casesScoreMap[s.case_id].count += 1;
+    });
+    const hardestCases = Object.entries(casesScoreMap)
+        .map(([id, d]) => ({ id, avg: (d.total / d.count).toFixed(1), count: d.count, name: d.name }))
+        .filter(c => c.count >= 2)
+        .sort((a, b) => a.avg - b.avg)
+        .slice(0, 3);
 
     const totalSpecialties = metrics.specialty_list?.length || metrics.specialties || 0;
 
@@ -75,6 +112,68 @@ const Overview = () => {
                 <StatCard label="Cas Cliniques Actifs" value={String(metrics.active_recent_cases)} icon={BookOpen} />
                 <StatCard label="Sessions" value={String(metrics.total_sessions)} icon={Activity} />
             </div>
+
+            {/* Bilan Rapide Temps Réel */}
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                {/* Sessions aujourd'hui */}
+                <div className="stat-card p-6 border-[#1A2E28] hover:border-[#00C88C]/30 transition-all">
+                    <div className="flex items-center space-x-3 mb-3">
+                        <div className="w-8 h-8 rounded-xl bg-[#00C88C]/10 flex items-center justify-center"><Zap size={16} className="text-[#00C88C]" /></div>
+                        <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Aujourd'hui</span>
+                        <div className="w-2 h-2 rounded-full bg-[#00C88C] animate-pulse ml-auto" />
+                    </div>
+                    <p className="text-3xl font-black text-white">{sessionsToday}</p>
+                    <p className="text-[10px] text-slate-600 font-bold mt-1">sessions lancées</p>
+                </div>
+
+                {/* Score moyen */}
+                <div className="stat-card p-6 border-[#1A2E28] hover:border-[#3b82f6]/30 transition-all">
+                    <div className="flex items-center space-x-3 mb-3">
+                        <div className="w-8 h-8 rounded-xl bg-blue-500/10 flex items-center justify-center"><TrendingUp size={16} className="text-blue-400" /></div>
+                        <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Score Moyen</span>
+                    </div>
+                    <p className="text-3xl font-black text-white">{avgScore ? `${avgScore}/20` : '—'}</p>
+                    <p className="text-[10px] text-slate-600 font-bold mt-1">{completedSessions.length} évaluations</p>
+                </div>
+
+                {/* Taux réussite */}
+                <div className="stat-card p-6 border-[#1A2E28] hover:border-[#22c55e]/30 transition-all">
+                    <div className="flex items-center space-x-3 mb-3">
+                        <div className="w-8 h-8 rounded-xl bg-green-500/10 flex items-center justify-center"><CheckCircle2 size={16} className="text-green-400" /></div>
+                        <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Taux Réussite</span>
+                    </div>
+                    <p className="text-3xl font-black text-white">{passRate !== null ? `${passRate}%` : '—'}</p>
+                    <p className="text-[10px] text-slate-600 font-bold mt-1">score ≥ 10/20</p>
+                </div>
+
+                {/* Cas les plus difficiles */}
+                <div className="stat-card p-6 border-[#1A2E28] hover:border-rose-500/30 transition-all">
+                    <div className="flex items-center space-x-3 mb-3">
+                        <div className="w-8 h-8 rounded-xl bg-rose-500/10 flex items-center justify-center"><AlertTriangle size={16} className="text-rose-400" /></div>
+                        <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Cas Difficiles</span>
+                    </div>
+                    {hardestCases.length === 0 ? (
+                        <p className="text-sm text-slate-600 font-bold mt-2">Pas encore de données</p>
+                    ) : (
+                        <div className="space-y-2 mt-1">
+                            {hardestCases.map((c, i) => (
+                                <div key={c.id} className="flex items-center justify-between">
+                                    <span className="text-[10px] text-slate-400 truncate max-w-[120px]">{c.name}</span>
+                                    <span className="text-[10px] font-black text-rose-400">{c.avg}/20</span>
+                                </div>
+                            ))}
+                        </div>
+                    )}
+                </div>
+            </div>
+
+            {/* Indicateur dernière mise à jour */}
+            {lastUpdated && (
+                <div className="flex items-center justify-end space-x-2 text-[9px] text-slate-700">
+                    <div className="w-1.5 h-1.5 rounded-full bg-[#00C88C] animate-pulse" />
+                    <span>Mis à jour à {lastUpdated.toLocaleTimeString('fr-FR')} • Actualisation auto toutes les 30s</span>
+                </div>
+            )}
 
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
                 <div className="lg:col-span-1 stat-card">

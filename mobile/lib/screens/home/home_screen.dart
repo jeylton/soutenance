@@ -7,9 +7,11 @@ import '../../services/api.dart';
 import '../../services/notification_service.dart';
 import 'package:provider/provider.dart';
 import '../../state/session_state.dart';
+import '../../models/specialty.dart';
 import '../profile/profile_screen.dart';
 import '../notifications/notifications_screen.dart';
 import '../exam/exam_screen.dart';
+import 'specialty_journey_screen.dart';
 
 // Translation helper (uses SessionState)
 String _t(BuildContext context, String fr, String en) {
@@ -18,7 +20,15 @@ String _t(BuildContext context, String fr, String en) {
 }
 
 class HomeScreen extends StatefulWidget {
-  const HomeScreen({super.key});
+  const HomeScreen({
+    super.key,
+    this.initialSpecialtyId,
+    this.initialCategory,
+  });
+
+  final int? initialSpecialtyId;
+  final String? initialCategory;
+
   @override
   State<HomeScreen> createState() => _HomeScreenState();
 }
@@ -35,9 +45,23 @@ class _HomeScreenState extends State<HomeScreen> {
   String? _error;
   int _examCount = 0;
 
+  static const List<Color> _specialtyColors = [
+    Color(0xFFF24E7D),
+    Color(0xFF45BEEB),
+    Color(0xFF7D57F1),
+    Color(0xFFFFB347),
+    Color(0xFF2E8B57),
+    Color(0xFFDA70D6),
+    Color(0xFF4682B4),
+  ];
+
   @override
   void initState() {
     super.initState();
+    _selectedSpecialtyId = widget.initialSpecialtyId;
+    if (widget.initialCategory != null && widget.initialCategory!.isNotEmpty) {
+      _selectedCategory = widget.initialCategory!;
+    }
     _loadData();
   }
 
@@ -61,6 +85,9 @@ class _HomeScreenState extends State<HomeScreen> {
       } catch (_) {}
 
       if (sessionState.userId != null && sessionState.userId!.isNotEmpty) {
+        // Charger le streak en parallèle
+        Api.getStreak().then((s) => sessionState.setStreak(s)).catchError((_) {});
+
         try {
           final sessions = await Api.getSessions(userId: sessionState.userId!);
           for (final s in sessions) {
@@ -74,6 +101,16 @@ class _HomeScreenState extends State<HomeScreen> {
       setState(() {
         _cases = results[0].where((c) => c['status'] == 'active').toList();
         _specialties = results[1];
+        if (_selectedSpecialtyId != null) {
+          final selected = _specialties.cast<Map>().firstWhere(
+            (sp) => _asInt(sp['id']) == _selectedSpecialtyId,
+            orElse: () => <String, dynamic>{},
+          );
+          final selectedName = (selected['name'] ?? '').toString().trim();
+          if (selectedName.isNotEmpty) {
+            _selectedCategory = selectedName;
+          }
+        }
         _playedCaseIds
           ..clear()
           ..addAll(playedCaseIds);
@@ -92,6 +129,17 @@ class _HomeScreenState extends State<HomeScreen> {
     if (value is int) return value;
     if (value is num) return value.toInt();
     return int.tryParse((value ?? '').toString().trim());
+  }
+
+  IconData _specialtyIcon(String name) {
+    final n = name.toLowerCase();
+    if (n.contains('cardio')) return LucideIcons.heartPulse;
+    if (n.contains('neuro')) return LucideIcons.brain;
+    if (n.contains('pneumo')) return LucideIcons.stethoscope;
+    if (n.contains('infect')) return LucideIcons.shield;
+    if (n.contains('pedi')) return LucideIcons.baby;
+    if (n.contains('gastro')) return LucideIcons.pill;
+    return LucideIcons.activity;
   }
 
   Future<void> _startSimulation(
@@ -307,7 +355,7 @@ class _HomeScreenState extends State<HomeScreen> {
                       borderRadius: BorderRadius.circular(20),
                       boxShadow: [
                         BoxShadow(
-                          color: const Color(0xFF8B5CF6).withOpacity(0.3),
+                          color: const Color(0xFF8B5CF6).withValues(alpha: 0.3),
                           blurRadius: 15,
                           offset: const Offset(0, 6),
                         ),
@@ -319,7 +367,7 @@ class _HomeScreenState extends State<HomeScreen> {
                           width: 44,
                           height: 44,
                           decoration: BoxDecoration(
-                            color: Colors.white.withOpacity(0.2),
+                            color: Colors.white.withValues(alpha: 0.2),
                             borderRadius: BorderRadius.circular(12),
                           ),
                           child: const Icon(
@@ -350,7 +398,7 @@ class _HomeScreenState extends State<HomeScreen> {
                                 style: GoogleFonts.outfit(
                                   fontSize: 11,
                                   fontWeight: FontWeight.w500,
-                                  color: Colors.white.withOpacity(0.8),
+                                  color: Colors.white.withValues(alpha: 0.8),
                                 ),
                               ),
                             ],
@@ -384,15 +432,36 @@ class _HomeScreenState extends State<HomeScreen> {
                         _selectedCategory == 'Tous',
                       ),
                     ),
-                    ..._specialties.map((sp) {
+                    ..._specialties.asMap().entries.map((entry) {
+                      final index = entry.key;
+                      final sp = entry.value;
                       final name = sp['name'] ?? '';
-                      final spId = sp['id'];
+                      final spId = _asInt(sp['id']);
                       return GestureDetector(
-                        onTap:
-                            () => setState(() {
-                              _selectedCategory = name;
-                              _selectedSpecialtyId = spId;
-                            }),
+                        onTap: () {
+                          if (spId == null) return;
+                          setState(() {
+                            _selectedCategory = name;
+                            _selectedSpecialtyId = spId;
+                          });
+
+                          final specialty = Specialty(
+                            id: spId,
+                            title: name.toString(),
+                            description: 'Progression clinique',
+                            icon: _specialtyIcon(name.toString()),
+                            color: _specialtyColors[index % _specialtyColors.length],
+                            progress: 0,
+                          );
+                          Navigator.of(context).push(
+                            MaterialPageRoute(
+                              builder:
+                                  (_) => SpecialtyJourneyScreen(
+                                    specialty: specialty,
+                                  ),
+                            ),
+                          );
+                        },
                         child: _buildCategoryTab(
                           name,
                           _selectedCategory == name,
@@ -411,7 +480,7 @@ class _HomeScreenState extends State<HomeScreen> {
                       _cases.where((c) {
                         if (_selectedCategory != 'Tous' &&
                             _selectedSpecialtyId != null) {
-                          final caseSpecId = c['specialty_id'];
+                          final caseSpecId = _asInt(c['specialty_id']);
                           if (caseSpecId != _selectedSpecialtyId) return false;
                         }
                         if (_searchQuery.isNotEmpty) {
@@ -468,7 +537,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     .where((c) {
                       if (_selectedCategory != 'Tous' &&
                           _selectedSpecialtyId != null) {
-                        final caseSpecId = c['specialty_id'];
+                        final caseSpecId = _asInt(c['specialty_id']);
                         if (caseSpecId != _selectedSpecialtyId) return false;
                       }
                       if (_searchQuery.isNotEmpty) {
@@ -564,7 +633,7 @@ class _HomeScreenState extends State<HomeScreen> {
                       borderRadius: BorderRadius.circular(36),
                       boxShadow: [
                         BoxShadow(
-                          color: AppColors.primary.withOpacity(0.3),
+                          color: AppColors.primary.withValues(alpha: 0.3),
                           blurRadius: 30,
                           offset: const Offset(0, 15),
                         ),
@@ -581,7 +650,7 @@ class _HomeScreenState extends State<HomeScreen> {
                                 style: GoogleFonts.outfit(
                                   fontSize: 12,
                                   fontWeight: FontWeight.w900,
-                                  color: Colors.white.withOpacity(0.8),
+                                  color: Colors.white.withValues(alpha: 0.8),
                                   letterSpacing: 1.5,
                                 ),
                               ),
@@ -610,7 +679,7 @@ class _HomeScreenState extends State<HomeScreen> {
                                 style: GoogleFonts.outfit(
                                   fontSize: 14,
                                   fontWeight: FontWeight.w500,
-                                  color: Colors.white.withOpacity(0.9),
+                                  color: Colors.white.withValues(alpha: 0.9),
                                 ),
                               ),
                             ],
@@ -633,7 +702,7 @@ class _HomeScreenState extends State<HomeScreen> {
                                     width: 60,
                                     height: 80,
                                     decoration: BoxDecoration(
-                                      color: Colors.white.withOpacity(0.2),
+                                      color: Colors.white.withValues(alpha: 0.2),
                                       borderRadius: BorderRadius.circular(20),
                                     ),
                                     child: const Center(
@@ -651,7 +720,7 @@ class _HomeScreenState extends State<HomeScreen> {
                             width: 60,
                             height: 80,
                             decoration: BoxDecoration(
-                              color: Colors.white.withOpacity(0.2),
+                              color: Colors.white.withValues(alpha: 0.2),
                               borderRadius: BorderRadius.circular(20),
                             ),
                             child: const Center(
@@ -686,7 +755,7 @@ class _HomeScreenState extends State<HomeScreen> {
             isSelected
                 ? [
                   BoxShadow(
-                    color: AppColors.primary.withOpacity(0.3),
+                    color: AppColors.primary.withValues(alpha: 0.3),
                     blurRadius: 10,
                     offset: const Offset(0, 4),
                   ),

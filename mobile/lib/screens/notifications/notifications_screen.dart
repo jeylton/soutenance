@@ -73,7 +73,7 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
       case 'badge':
         return LucideIcons.award;
       case 'xp':
-        return LucideIcons.zap;
+        return LucideIcons.coins;
       case 'exam':
         return LucideIcons.clipboardCheck;
       default:
@@ -88,7 +88,7 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
       case 'badge':
         return const Color(0xFFF59E0B);
       case 'xp':
-        return const Color(0xFF10B981);
+        return const Color(0xFFF59E0B);
       case 'exam':
         return const Color(0xFF8B5CF6);
       default:
@@ -192,7 +192,7 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
                             color:
                                 isRead
                                     ? AppColors.border
-                                    : AppColors.primary.withOpacity(0.3),
+                                    : AppColors.primary.withValues(alpha: 0.3),
                           ),
                         ),
                         child: Row(
@@ -201,7 +201,7 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
                               width: 48,
                               height: 48,
                               decoration: BoxDecoration(
-                                color: _colorForType(type).withOpacity(0.1),
+                                color: _colorForType(type).withValues(alpha: 0.1),
                                 borderRadius: BorderRadius.circular(14),
                               ),
                               child: Icon(

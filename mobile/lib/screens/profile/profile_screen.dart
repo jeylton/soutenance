@@ -10,7 +10,6 @@ import '../auth/login_screen.dart';
 import 'account_settings_screen.dart';
 import 'case_history_screen.dart';
 import 'leaderboard_screen.dart';
-import 'shop_screen.dart';
 
 class ProfileScreen extends StatefulWidget {
   final bool showBackButton;
@@ -24,10 +23,10 @@ class ProfileScreen extends StatefulWidget {
 class _ProfileScreenState extends State<ProfileScreen> {
   // Avatar emoji map matching SHOP_ITEMS
   static const Map<String, String> _avatarEmojis = {
-    'avatar_docteur': '👨‍⚕️',
+    'avatar_docteur': '🩺',
     'avatar_chirurgien': '🧑‍⚕️',
     'avatar_scientifique': '🔬',
-    'avatar_gold': '🖼️',
+    'avatar_gold': '🥇',
     'avatar_ninja': '🥷',
     'avatar_diamond': '💎',
     'avatar_robot': '🤖',
@@ -37,11 +36,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
   List<dynamic> _ownedAvatars = [];
   String? _activeAvatarId;
   String _rankLabel = '--';
-  String _activityLabel = 'Weekly';
-  int _totalPoints = 0;
+  String _activityLabel = 'Régulier';
+  int _totalTrophies = 0;
 
-  static const int _pointsPerLevel = 1000;
-  static const int _pointsPerScoreUnit = 100;
+  static const int _trophiesPerLevel = 10;
 
   @override
   void initState() {
@@ -57,25 +55,36 @@ class _ProfileScreenState extends State<ProfileScreen> {
       if (userId == null || userId.trim().isEmpty) return;
 
       final results = await Future.wait([
+        Api.getGamification(),
         Api.getLeaderboard(),
         Api.getSessions(userId: userId),
       ]);
 
-      final leaderboard = results[0] as List<dynamic>;
-      final sessions = results[1] as List<dynamic>;
+      final gamification = results[0] as Map<String, dynamic>;
+      final leaderboard = results[1] as List<dynamic>;
+      final sessions = results[2] as List<dynamic>;
 
-      int computedPoints = 0;
-      for (final s in sessions) {
-        if (s is! Map) continue;
-        final scoreRaw = (s['score'] ?? 0);
-        final scoreNum =
-            scoreRaw is num
-                ? scoreRaw.toDouble()
-                : double.tryParse(scoreRaw.toString()) ?? 0;
-        if (scoreNum > 0) {
-          computedPoints += (scoreNum * _pointsPerScoreUnit).round();
-        }
-      }
+      final trophies =
+          (gamification['trophies'] is num)
+              ? (gamification['trophies'] as num).toInt()
+              : int.tryParse((gamification['trophies'] ?? 0).toString()) ?? 0;
+      final xp =
+          (gamification['xp'] is num)
+              ? (gamification['xp'] as num).toInt()
+              : int.tryParse((gamification['xp'] ?? 0).toString()) ?? 0;
+      final level =
+          (gamification['level'] is num)
+              ? (gamification['level'] as num).toInt()
+              : int.tryParse((gamification['level'] ?? 1).toString()) ?? 1;
+
+      final rawBadges = (gamification['badges'] as List<dynamic>?) ?? [];
+      final badges =
+          rawBadges
+              .whereType<Map>()
+              .map((b) => Map<String, dynamic>.from(b))
+              .toList();
+
+      state.updateProfile(xp: xp, level: level, badges: badges);
 
       String rank = '--';
       final idx = leaderboard.indexWhere(
@@ -101,19 +110,22 @@ class _ProfileScreenState extends State<ProfileScreen> {
         }
       }
 
-      String activity = 'Weekly';
+      String activity = 'Régulier';
       if (activeDays.length >= 5) {
-        activity = 'Daily';
+        activity = 'Quotidien';
       } else if (activeDays.length >= 3) {
-        activity = 'Frequent';
+        activity = 'Fréquent';
       }
 
       if (!mounted) return;
       setState(() {
         _rankLabel = rank;
         _activityLabel = activity;
-        _totalPoints = computedPoints;
+        _totalTrophies = trophies;
       });
+
+      // Partager trophées et classement avec le reste de l'app (UserProfileBar, etc.)
+      state.setTrophiesAndRank(trophies: trophies, rankLabel: rank);
     } catch (_) {
       // Keep defaults when profile meta cannot be loaded.
     }
@@ -127,6 +139,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
               ?.where((i) => i['category'] == 'avatar')
               .toList() ??
           [];
+      if (!mounted) return;
       final state = Provider.of<SessionState>(context, listen: false);
       setState(() {
         _ownedAvatars = owned;
@@ -275,6 +288,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
           if (!localOnly) {
             await Api.equipItem(avatarId);
           }
+          if (!mounted) return;
           setState(() => _activeAvatarId = avatarId);
           final state = Provider.of<SessionState>(context, listen: false);
           state.updateProfile(avatarId: avatarId);
@@ -284,7 +298,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
         decoration: BoxDecoration(
           color:
               isActive
-                  ? AppColors.primary.withOpacity(0.1)
+                  ? AppColors.primary.withValues(alpha: 0.1)
                   : const Color(0xFFF8FAFC),
           borderRadius: BorderRadius.circular(20),
           border: Border.all(
@@ -353,38 +367,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
     return isFr ? 'Étudiant' : 'Student';
   }
 
-  List<String> _unlocksForLevel(int level, bool isFr) {
-    final list = <String>[];
-    if (level >= 2) {
-      list.add(
-        isFr
-            ? 'Accès à des indices avancés et packs premium'
-            : 'Access to advanced hints and premium packs',
-      );
-    }
-    if (level >= 3) {
-      list.add(
-        isFr
-            ? 'Déblocage de cas de difficulté intermédiaire'
-            : 'Intermediate difficulty cases unlocked',
-      );
-    }
-    if (level >= 5) {
-      list.add(
-        isFr
-            ? 'Statut médecin + cas complexes prioritaires'
-            : 'Physician status + priority complex cases',
-      );
-    }
-    if (level >= 7) {
-      list.add(
-        isFr
-            ? 'Accès renforcé aux badges/titres élite'
-            : 'Enhanced access to elite badges/titles',
-      );
-    }
-    return list;
-  }
 
   Widget _languageOption(
     BuildContext ctx,
@@ -397,6 +379,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
     return InkWell(
       onTap: () {
         state.setLocale(locale);
+        Api.updateProfile({'locale': locale});
         Navigator.pop(ctx);
         ScaffoldMessenger.of(ctx).showSnackBar(
           SnackBar(
@@ -413,13 +396,13 @@ class _ProfileScreenState extends State<ProfileScreen> {
         decoration: BoxDecoration(
           color:
               isSelected
-                  ? AppColors.primary.withOpacity(0.1)
+                  ? AppColors.primary.withValues(alpha: 0.1)
                   : const Color(0xFFF8FAFC),
           borderRadius: BorderRadius.circular(16),
           border: Border.all(
             color:
                 isSelected
-                    ? AppColors.primary.withOpacity(0.4)
+                    ? AppColors.primary.withValues(alpha: 0.4)
                     : const Color(0xFFE2E8F0),
             width: isSelected ? 2 : 1,
           ),
@@ -454,17 +437,18 @@ class _ProfileScreenState extends State<ProfileScreen> {
     String status,
     bool isFr,
   ) {
-    final points = _totalPoints;
+    final trophies = _totalTrophies;
     final xp = state.xp;
-    final level = (points ~/ _pointsPerLevel) + 1;
-    final currentLevelFloor = (level - 1) * _pointsPerLevel;
-    final nextLevelCap = level * _pointsPerLevel;
-    final pointsInLevel = (points - currentLevelFloor).clamp(
+    final level = (trophies ~/ _trophiesPerLevel) + 1;
+    final currentLevelFloor = (level - 1) * _trophiesPerLevel;
+    final nextLevelCap = level * _trophiesPerLevel;
+    final trophiesInLevel = (trophies - currentLevelFloor).clamp(
       0,
-      _pointsPerLevel,
+      _trophiesPerLevel,
     );
-    final progress = (pointsInLevel / _pointsPerLevel).clamp(0, 1).toDouble();
-    final pointsToNext = (nextLevelCap - points).clamp(0, 999999);
+    final progress =
+        (trophiesInLevel / _trophiesPerLevel).clamp(0, 1).toDouble();
+    final trophiesToNext = (nextLevelCap - trophies).clamp(0, 999999);
     final awards = state.badges.length;
     final progressPercent = (progress * 100).toStringAsFixed(0);
     final nextLevel = level + 1;
@@ -488,7 +472,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
               height: 120,
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
-                color: const Color(0xFF1E88E5).withOpacity(0.08),
+                color: const Color(0xFF1E88E5).withValues(alpha: 0.08),
               ),
             ),
           ),
@@ -500,7 +484,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
               height: 90,
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
-                color: const Color(0xFF38BDF8).withOpacity(0.10),
+                color: const Color(0xFF38BDF8).withValues(alpha: 0.10),
               ),
             ),
           ),
@@ -516,7 +500,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
               border: Border.all(color: const Color(0xFFD9ECFF), width: 1.2),
               boxShadow: [
                 BoxShadow(
-                  color: const Color(0xFF1E88E5).withOpacity(0.10),
+                  color: const Color(0xFF1E88E5).withValues(alpha: 0.10),
                   blurRadius: 28,
                   offset: const Offset(0, 12),
                 ),
@@ -690,7 +674,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                                   ),
                                   const SizedBox(height: 1),
                                   Text(
-                                    '$points pts',
+                                    '$trophies trophées',
                                     style: GoogleFonts.outfit(
                                       fontSize: 11,
                                       fontWeight: FontWeight.w600,
@@ -723,13 +707,11 @@ class _ProfileScreenState extends State<ProfileScreen> {
                               width: 32,
                               height: 32,
                               decoration: BoxDecoration(
-                                color: const Color(0xFFECE9FF),
+                                color: const Color(0xFFFEF3C7),
                                 borderRadius: BorderRadius.circular(10),
                               ),
-                              child: const Icon(
-                                LucideIcons.zap,
-                                size: 16,
-                                color: Color(0xFF6D28D9),
+                              child: const Center(
+                                child: Text('🪙', style: TextStyle(fontSize: 18)),
                               ),
                             ),
                             const SizedBox(width: 10),
@@ -822,7 +804,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
                     Text(
-                      '$points / $nextLevelCap pts',
+                      '$trophies / $nextLevelCap trophées',
                       style: GoogleFonts.outfit(
                         fontSize: 12,
                         fontWeight: FontWeight.w700,
@@ -831,8 +813,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     ),
                     Text(
                       isFr
-                          ? '$pointsToNext pts pour Niv. $nextLevel'
-                          : '$pointsToNext pts to Lvl $nextLevel',
+                          ? '$trophiesToNext trophées pour Niv. $nextLevel'
+                          : '$trophiesToNext trophies to Lvl $nextLevel',
                       style: GoogleFonts.outfit(
                         fontSize: 12,
                         fontWeight: FontWeight.w700,
@@ -868,7 +850,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     Expanded(
                       child: _profileStatTile(
                         icon: LucideIcons.award,
-                        label: isFr ? 'Awards' : 'Awards',
+                        label: isFr ? 'Récompenses' : 'Awards',
                         value: '$awards',
                         bg: const Color(0xFFF5F3FF),
                         iconColor: const Color(0xFF7C3AED),
@@ -931,7 +913,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
     final name = state.userName ?? 'Utilisateur';
     final profileType = state.profileType ?? 'Étudiant';
     final isFr = state.isFrench;
-    final effectiveLevel = (_totalPoints ~/ _pointsPerLevel) + 1;
+    final effectiveLevel = (_totalTrophies ~/ _trophiesPerLevel) + 1;
     final status = _levelStatus(effectiveLevel, isFr);
 
     return Scaffold(
@@ -981,7 +963,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   borderRadius: BorderRadius.circular(32),
                   boxShadow: [
                     BoxShadow(
-                      color: Colors.black.withOpacity(0.03),
+                      color: Colors.black.withValues(alpha: 0.03),
                       blurRadius: 20,
                       offset: const Offset(0, 10),
                     ),
@@ -1039,19 +1021,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
                       },
                       color: const Color(0xFFFEF3C7),
                       iconColor: const Color(0xFFF59E0B),
-                    ),
-                    _buildMenuOption(
-                      icon: LucideIcons.shoppingBag,
-                      label: state.t('Boutique XP', 'XP Shop'),
-                      onTap: () {
-                        Navigator.of(context).push(
-                          MaterialPageRoute(
-                            builder: (context) => const ShopScreen(),
-                          ),
-                        );
-                      },
-                      color: const Color(0xFFDCFCE7),
-                      iconColor: const Color(0xFF22C55E),
                     ),
                     const Divider(
                       height: 1,

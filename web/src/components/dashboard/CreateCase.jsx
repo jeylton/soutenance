@@ -40,6 +40,12 @@ const InputGroup = ({ label, children, className = "" }) => (
 
 const FALLBACK_AVATAR = REAL_AVATARS[0] || null;
 
+const toStringArray = (value, fallback = ['']) => {
+    if (Array.isArray(value)) return value;
+    if (typeof value === 'string' && value.trim()) return [value.trim()];
+    return fallback;
+};
+
 function AvatarThumb({ avatar, selected, onSelect }) {
     const [srcIndex, setSrcIndex] = useState(0);
     const candidates = [avatar.img, avatar.path].filter(Boolean);
@@ -72,11 +78,17 @@ function AvatarThumb({ avatar, selected, onSelect }) {
     );
 }
 
-const CreateCase = ({ onBack, editData }) => {
+const CreateCase = ({ onBack, editData, presetSpecialtyId, presetSeason, presetEpisode }) => {
     const api = import.meta.env.VITE_API_URL || '';
     const isEdit = !!editData;
     const [specialties, setSpecialties] = useState([]);
-    const [selectedSpecialty, setSelectedSpecialty] = useState(editData?.specialty_id || '');
+    const initialSpecialty = (editData?.specialty_id ?? presetSpecialtyId ?? '');
+    const [selectedSpecialty, setSelectedSpecialty] = useState(initialSpecialty ? String(initialSpecialty) : '');
+    const [allCases, setAllCases] = useState([]);
+    const initialSeason = Number(editData?.medical_history?.season) || Number(presetSeason) || null;
+    const initialEpisode = Number(editData?.medical_history?.episode) || Number(presetEpisode) || null;
+    const [assignedSeason, setAssignedSeason] = useState(initialSeason);
+    const [assignedEpisode, setAssignedEpisode] = useState(initialEpisode);
     const initialAvatar = resolveAvatarByValue(editData?.avatar) || resolveAvatarProfile({
         age: editData?.medical_history?.age,
         gender: editData?.medical_history?.gender,
@@ -95,11 +107,21 @@ const CreateCase = ({ onBack, editData }) => {
     const [promptPatient, setPromptPatient] = useState(editData?.prompt_patient || '');
     const [promptTuteur, setPromptTuteur] = useState(editData?.prompt_tuteur || '');
     // Dynamic arrays
-    const [antecedentsPerso, setAntecedentsPerso] = useState(editData?.medical_history?.antecedents?.perso?.length ? editData.medical_history.antecedents.perso : ['']);
-    const [familyPere, setFamilyPere] = useState(editData?.medical_history?.antecedents?.familiaux?.pere?.length ? editData.medical_history.antecedents.familiaux.pere : ['']);
-    const [familyMere, setFamilyMere] = useState(editData?.medical_history?.antecedents?.familiaux?.mere?.length ? editData.medical_history.antecedents.familiaux.mere : ['']);
-    const [allergies, setAllergies] = useState(editData?.medical_history?.allergies?.length ? editData.medical_history.allergies : ['']);
-    const [habits, setHabits] = useState(editData?.medical_history?.habits?.length ? editData.medical_history.habits : ['']);
+    const [antecedentsPerso, setAntecedentsPerso] = useState(
+        toStringArray(editData?.medical_history?.antecedents?.perso, ['']),
+    );
+    const [familyPere, setFamilyPere] = useState(
+        toStringArray(editData?.medical_history?.antecedents?.familiaux?.pere, ['']),
+    );
+    const [familyMere, setFamilyMere] = useState(
+        toStringArray(editData?.medical_history?.antecedents?.familiaux?.mere, ['']),
+    );
+    const [allergies, setAllergies] = useState(
+        toStringArray(editData?.medical_history?.allergies, ['']),
+    );
+    const [habits, setHabits] = useState(
+        toStringArray(editData?.medical_history?.habits, ['']),
+    );
     const [exams, setExams] = useState(editData?.case_exams?.length ? editData.case_exams.map(e => ({ name: e.name, result: e.result, is_relevant: e.is_relevant !== undefined ? e.is_relevant : true })) : [{ name: '', result: '', is_relevant: true }]);
     const [treatment, setTreatment] = useState(editData?.medical_history?.treatment?.length ? editData.medical_history.treatment : [{ medication: '', dosage: '', frequency: '', duration: '' }]);
     const [treatmentNotes, setTreatmentNotes] = useState(editData?.medical_history?.treatment_notes || '');
@@ -115,6 +137,40 @@ const CreateCase = ({ onBack, editData }) => {
             .toLowerCase()
             .replace(/[^a-z0-9]+/g, ' ')
             .trim();
+
+    const seasonOfCase = (c) => {
+        const n = Number(c?.medical_history?.season);
+        return Number.isFinite(n) && n > 0 ? n : null;
+    };
+
+    const episodeOfCase = (c) => {
+        const n = Number(c?.medical_history?.episode);
+        return Number.isFinite(n) && n > 0 ? n : null;
+    };
+
+    const resolveNextSlot = (specialtyId, difficultyLevel) => {
+        const sid = Number(specialtyId);
+        const season = Number(difficultyLevel) || 1; // Saison = Difficulté (1 étoile → Saison 1, etc.)
+        if (!Number.isFinite(sid) || sid <= 0) {
+            return { season, episode: 1 };
+        }
+
+        const usedEpisodes = new Set();
+        for (const c of allCases) {
+            if (String(c?.specialty_id) !== String(sid)) continue;
+            if (String(c?.status || '').toLowerCase() !== 'active') continue;
+            const s = seasonOfCase(c);
+            const e = episodeOfCase(c);
+            if (s !== season || !e || e > 10) continue;
+            usedEpisodes.add(e);
+        }
+
+        for (let e = 1; e <= 10; e += 1) {
+            if (!usedEpisodes.has(e)) return { season, episode: e };
+        }
+
+        return { season, episode: 11 }; // 11 = saison complète
+    };
 
     useEffect(() => {
         const profile = resolveAvatarByValue(selectedAvatarPath) || resolveAvatarProfile({ age: patientAge, gender: patientGender });
@@ -132,6 +188,28 @@ const CreateCase = ({ onBack, editData }) => {
             .then(d => setSpecialties(d.specialties || []))
             .catch(() => setSpecialties([]));
     }, []);
+
+    useEffect(() => {
+        fetch(`${api}/api/cases`)
+            .then((r) => r.json())
+            .then((d) => setAllCases(d.cases || []))
+            .catch(() => setAllCases([]));
+    }, [api]);
+
+    useEffect(() => {
+        if (!isEdit) return;
+        setAssignedSeason(Number(editData?.medical_history?.season) || null);
+        setAssignedEpisode(Number(editData?.medical_history?.episode) || null);
+    }, [isEdit, editData]);
+
+    useEffect(() => {
+        if (isEdit) return;
+        if (presetSeason && presetEpisode) return; // slot pré-assigné (Remplacer) → ne pas recalculer
+        if (!selectedSpecialty) return;
+        const next = resolveNextSlot(selectedSpecialty, difficulty);
+        setAssignedSeason(next.season);
+        setAssignedEpisode(next.episode);
+    }, [isEdit, selectedSpecialty, difficulty, allCases, presetSeason, presetEpisode]);
 
     // Dynamic array helpers
     const addItem = (setter) => setter((prev) => [...prev, '']);
@@ -185,11 +263,11 @@ const CreateCase = ({ onBack, editData }) => {
             setConsultationReason(c.consultation_reason || '');
             setInitialSymptoms(c.initial_symptoms || '');
             setDiagnosisFinal(c.diagnosis || '');
-            setAntecedentsPerso(c.antecedents_perso?.length ? c.antecedents_perso : ['']);
-            setFamilyPere(c.antecedents_familiaux_pere?.length ? c.antecedents_familiaux_pere : ['']);
-            setFamilyMere(c.antecedents_familiaux_mere?.length ? c.antecedents_familiaux_mere : ['']);
-            setAllergies(c.allergies?.length ? c.allergies : ['Néant']);
-            setHabits(c.habits?.length ? c.habits : ['']);
+            setAntecedentsPerso(toStringArray(c.antecedents_perso, ['']));
+            setFamilyPere(toStringArray(c.antecedents_familiaux_pere, ['']));
+            setFamilyMere(toStringArray(c.antecedents_familiaux_mere, ['']));
+            setAllergies(toStringArray(c.allergies, ['Néant']));
+            setHabits(toStringArray(c.habits, ['']));
             setExams(c.exams?.length ? c.exams : [{ name: '', result: '' }]);
             setPromptPatient(c.prompt_patient || '');
             setPromptTuteur(c.prompt_tuteur || '');
@@ -228,6 +306,9 @@ const CreateCase = ({ onBack, editData }) => {
         consultation_reason: consultationReason,
         initial_symptoms: initialSymptoms,
         medical_history: {
+            season: Number(assignedSeason) || null,
+            episode: Number(assignedEpisode) || null,
+            level: Number(assignedEpisode) || null,
             antecedents: {
                 perso: filterEmpty(antecedentsPerso),
                 familiaux: {
@@ -256,6 +337,14 @@ const CreateCase = ({ onBack, editData }) => {
     const saveCase = async (status = 'draft') => {
         if (!patientName.trim() || !consultationReason.trim()) {
             alert('Générez d\'abord un cas avec l\'IA ou remplissez le nom du patient et le motif');
+            return;
+        }
+        if (!selectedSpecialty) {
+            alert('Veuillez choisir une spécialité avant de publier.');
+            return;
+        }
+        if (!isEdit && (!assignedSeason || !assignedEpisode)) {
+            alert('Saison ou épisode non assigné — réessayez après la sélection de la spécialité.');
             return;
         }
         setSaving(true);
@@ -345,7 +434,7 @@ const CreateCase = ({ onBack, editData }) => {
                         </button>
                     )}
                 </div>
-                <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 items-end">
+                <div className="grid grid-cols-1 lg:grid-cols-4 gap-8 items-end">
                     <div className="space-y-4">
                         <label className="block text-[10px] font-black text-slate-400 uppercase tracking-[0.3em]">Niveau de Difficulté</label>
                         <div className="flex items-center space-x-6 bg-[#050C0A] rounded-2xl p-6 border border-[#1A2E28]">
@@ -369,6 +458,23 @@ const CreateCase = ({ onBack, editData }) => {
                                 <option key={sp.id} value={sp.id}>{sp.name}</option>
                             ))}
                         </select>
+                    </div>
+                    <div className="space-y-4">
+                        <label className="block text-[10px] font-black text-slate-400 uppercase tracking-[0.3em]">Saison</label>
+                        <input
+                            type="number"
+                            value={assignedSeason || ''}
+                            disabled
+                            className="w-full bg-[#050C0A] border border-[#1A2E28] rounded-2xl py-6 px-6 text-sm text-slate-400 font-bold shadow-inner"
+                        />
+                        <p className="text-[10px] font-bold uppercase tracking-widest">
+                            {assignedEpisode > 10
+                                ? <span className="text-rose-400">Saison complète — 10/10 épisodes publiés</span>
+                                : assignedEpisode
+                                ? <span className="text-[#00C88C]">Épisode {assignedEpisode}/10 — Prochain disponible</span>
+                                : <span className="text-slate-500">Choisir une spécialité pour calculer l'épisode</span>
+                            }
+                        </p>
                     </div>
                     <button onClick={generateWithAI} disabled={generating || !selectedSpecialty} className={`flex items-center justify-center space-x-3 py-6 px-8 rounded-2xl font-black uppercase text-sm tracking-widest transition-all disabled:opacity-40 ${generating ? 'bg-purple-500/20 text-purple-300 border border-purple-500/30' : 'bg-gradient-to-r from-purple-600 to-[#00C88C] text-white shadow-[0_0_30px_rgba(147,51,234,0.3)] hover:shadow-[0_0_50px_rgba(147,51,234,0.5)] hover:scale-[1.02]'}`}>
                         {generating ? (<><Loader2 size={22} className="animate-spin" /><span>L'IA génère le cas...</span></>) : (<><Sparkles size={22} /><span>Générer avec l'IA</span></>)}

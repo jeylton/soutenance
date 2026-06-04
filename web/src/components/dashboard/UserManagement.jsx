@@ -2,14 +2,21 @@ import React, { useEffect, useState } from 'react';
 import { Eye, MoreVertical, Search } from 'lucide-react';
 
 const AVATAR_EMOJIS = {
-    avatar_docteur: '👨‍⚕️',
+    avatar_docteur: '🩺',
     avatar_chirurgien: '🧑‍⚕️',
     avatar_scientifique: '🔬',
-    avatar_gold: '🖼️',
+    avatar_gold: '🥇',
     avatar_ninja: '🥷',
     avatar_diamond: '💎',
     avatar_robot: '🤖',
     avatar_crown: '👑',
+};
+
+// Emoji par défaut selon le type de profil (quand pas d'avatar personnalisé)
+const PROFILE_DEFAULT_EMOJIS = {
+    medecin: '🩺',
+    etudiant: '🎓',
+    joueur: '🎮',
 };
 
 const INITIALS_COLORS = [
@@ -32,6 +39,7 @@ const toNumber = (v) => {
 const UserCard = ({
     name,
     role,
+    profileType,
     cases,
     succ,
     online,
@@ -43,7 +51,9 @@ const UserCard = ({
     onCopyEmail,
     onEmail,
 }) => {
-    const emoji = avatarId ? AVATAR_EMOJIS[avatarId] : null;
+    const emoji = avatarId
+        ? (AVATAR_EMOJIS[avatarId] || null)
+        : (PROFILE_DEFAULT_EMOJIS[profileType] || null);
     const initials = getInitials(name);
     const colorClass = INITIALS_COLORS[idx % INITIALS_COLORS.length];
 
@@ -216,8 +226,7 @@ const UserManagement = () => {
                         <option value="">Tous</option>
                         <option value="etudiant">Étudiant</option>
                         <option value="medecin">Médecin</option>
-                        <option value="interne">Interne</option>
-                        <option value="autre">Autre</option>
+                        <option value="joueur">Joueur</option>
                     </select>
                 </div>
             </div>
@@ -237,10 +246,9 @@ const UserManagement = () => {
                                     ? 'Docteur'
                                     : u.profile_type === 'etudiant'
                                     ? 'Étudiant'
-                                    : u.profile_type === 'interne'
-                                    ? 'Interne'
-                                    : 'Autre'
+                                    : 'Joueur'
                             }
+                            profileType={u.profile_type || 'joueur'}
                             cases={u._stats.completed}
                             succ={`${u._stats.successRate}%`}
                             online={false}

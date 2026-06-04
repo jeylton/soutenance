@@ -97,12 +97,12 @@ class BiologyCoursesScreen extends StatelessWidget {
               borderRadius: BorderRadius.circular(30),
               boxShadow: [
                 BoxShadow(
-                  color: Colors.black.withOpacity(0.02),
+                  color: Colors.black.withValues(alpha: 0.02),
                   blurRadius: 20,
                   offset: const Offset(0, 10),
                 ),
               ],
-              border: Border.all(color: AppColors.border.withOpacity(0.5)),
+              border: Border.all(color: AppColors.border.withValues(alpha: 0.5)),
             ),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -251,7 +251,7 @@ class BiologyCoursesScreen extends StatelessWidget {
                         vertical: 12,
                       ),
                       decoration: BoxDecoration(
-                        color: AppColors.primary.withOpacity(0.1),
+                        color: AppColors.primary.withValues(alpha: 0.1),
                         borderRadius: BorderRadius.circular(12),
                       ),
                       child: Text(

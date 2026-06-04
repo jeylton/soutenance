@@ -29,6 +29,8 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS institution text;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS specialty text;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS locale text default 'fr';
 
+-- Note: group_name is stored on exam_assignments (not on users) in this schema.
+
 -- ─── Specialties ───
 create table if not exists specialties (
   id bigint generated always as identity primary key,

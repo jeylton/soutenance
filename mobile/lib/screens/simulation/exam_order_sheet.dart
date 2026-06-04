@@ -5,7 +5,6 @@ import '../../theme/app_theme.dart';
 import '../../services/api.dart';
 import 'package:provider/provider.dart';
 import '../../state/session_state.dart';
-import 'exam_results_screen.dart';
 
 class ExamItem {
   final String name;
@@ -355,10 +354,8 @@ class _ExamOrderSheetState extends State<ExamOrderSheet> {
         }
       }
       if (mounted) {
-        Navigator.of(context).pop();
-        Navigator.of(
-          context,
-        ).push(MaterialPageRoute(builder: (_) => const ExamResultsScreen()));
+        // Return a value so SimulationScreen can decide what to do next.
+        Navigator.of(context).pop(true);
       }
     } catch (e) {
       ScaffoldMessenger.of(
@@ -425,7 +422,7 @@ class _ExamOrderSheetState extends State<ExamOrderSheet> {
                       width: 36,
                       height: 36,
                       decoration: BoxDecoration(
-                        color: AppColors.primary.withOpacity(0.1),
+                        color: AppColors.primary.withValues(alpha: 0.1),
                         shape: BoxShape.circle,
                       ),
                       child: Icon(

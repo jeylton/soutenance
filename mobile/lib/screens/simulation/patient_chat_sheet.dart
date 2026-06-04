@@ -29,6 +29,7 @@ class _PatientChatSheetState extends State<PatientChatSheet> {
   final FocusNode _focusNode = FocusNode();
   final FlutterTts _tts = FlutterTts();
   final AudioPlayer _audioPlayer = AudioPlayer();
+  static const double _elevenLabsPlaybackRate = 1.12;
   bool _isSending = false;
   int? _editingIndex;
   ChatMessage? _lastDeletedMessage;
@@ -143,25 +144,25 @@ class _PatientChatSheetState extends State<PatientChatSheet> {
     final isSenior = profile.ageGroup == 'senior';
 
     double pitch = 1.0;
-    double rate = 0.5;
+    double rate = 0.56;
     if (isChild && isFemale) {
       pitch = 1.35;
-      rate = 0.58;
+      rate = 0.64;
     } else if (isChild) {
       pitch = 1.24;
-      rate = 0.56;
+      rate = 0.62;
     } else if (isSenior && isFemale) {
       pitch = 1.0;
-      rate = 0.46;
+      rate = 0.5;
     } else if (isSenior) {
       pitch = 0.78;
-      rate = 0.44;
+      rate = 0.48;
     } else if (isFemale) {
       pitch = 1.12;
-      rate = 0.52;
+      rate = 0.58;
     } else {
       pitch = 0.92;
-      rate = 0.5;
+      rate = 0.56;
     }
 
     await _tts.setPitch(pitch);
@@ -230,6 +231,11 @@ class _PatientChatSheetState extends State<PatientChatSheet> {
         final audioBytes = await Api.patientVoiceAudio(caseId, cleaned);
         if (audioBytes.isNotEmpty) {
           await _audioPlayer.stop();
+          try {
+            await _audioPlayer.setPlaybackRate(_elevenLabsPlaybackRate);
+          } catch (_) {
+            // Playback rate is best-effort.
+          }
           await _audioPlayer.play(BytesSource(audioBytes));
           return;
         }
@@ -256,6 +262,23 @@ class _PatientChatSheetState extends State<PatientChatSheet> {
     final trimmed = text.trim();
     if (trimmed.isEmpty) return;
 
+    final sessionState = Provider.of<SessionState>(context, listen: false);
+
+    // Vérifier la limite de questions
+    if (sessionState.isQuestionLimitReached) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: const Text('Limite de questions atteinte. Passez aux examens ou à la conclusion.'),
+          backgroundColor: const Color(0xFFEF4444),
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        ),
+      );
+      return;
+    }
+
+    sessionState.incrementQuestionCount();
+
     setState(() {
       _isSending = true;
       if (_editingIndex != null &&
@@ -278,7 +301,6 @@ class _PatientChatSheetState extends State<PatientChatSheet> {
     _scrollToBottom();
 
     try {
-      final sessionState = Provider.of<SessionState>(context, listen: false);
       final caseId = sessionState.caseId ?? 0;
       final sessionId = sessionState.sessionId;
 
@@ -381,7 +403,8 @@ class _PatientChatSheetState extends State<PatientChatSheet> {
   }
 
   Widget _buildHeader(BuildContext context) {
-    final caseData = Provider.of<SessionState>(context, listen: false).caseData;
+    final state = Provider.of<SessionState>(context);
+    final caseData = state.caseData;
     final avatarUrl = Api.normalizeAssetUrl(
       (caseData?['avatar'] ?? '').toString(),
     );
@@ -394,7 +417,7 @@ class _PatientChatSheetState extends State<PatientChatSheet> {
             width: 46,
             height: 46,
             decoration: BoxDecoration(
-              color: AppColors.primary.withOpacity(0.1),
+              color: AppColors.primary.withValues(alpha: 0.1),
               shape: BoxShape.circle,
             ),
             child:
@@ -451,6 +474,36 @@ class _PatientChatSheetState extends State<PatientChatSheet> {
                     ),
                   ],
                 ),
+                const SizedBox(height: 4),
+                // Compteur de questions restantes
+                Builder(builder: (_) {
+                  final remaining = state.questionsRemaining;
+                  final isLow = remaining <= 5;
+                  final isOut = remaining == 0;
+                  return Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                    decoration: BoxDecoration(
+                      color: isOut
+                          ? const Color(0xFFEF4444)
+                          : isLow
+                              ? const Color(0xFFFEF3C7)
+                              : const Color(0xFFE0F2FE),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Text(
+                      isOut ? '🚫 Limite atteinte' : '💬 $remaining questions restantes',
+                      style: GoogleFonts.outfit(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w800,
+                        color: isOut
+                            ? Colors.white
+                            : isLow
+                                ? const Color(0xFF92400E)
+                                : const Color(0xFF0369A1),
+                      ),
+                    ),
+                  );
+                }),
               ],
             ),
           ),
@@ -491,7 +544,7 @@ class _PatientChatSheetState extends State<PatientChatSheet> {
               width: 32,
               height: 32,
               decoration: BoxDecoration(
-                color: AppColors.primary.withOpacity(0.1),
+                color: AppColors.primary.withValues(alpha: 0.1),
                 shape: BoxShape.circle,
               ),
               child: const Icon(
@@ -537,8 +590,8 @@ class _PatientChatSheetState extends State<PatientChatSheet> {
                           BoxShadow(
                             color:
                                 isDoctor
-                                    ? AppColors.primary.withOpacity(0.25)
-                                    : Colors.black.withOpacity(0.05),
+                                    ? AppColors.primary.withValues(alpha: 0.25)
+                                    : Colors.black.withValues(alpha: 0.05),
                             blurRadius: 8,
                             offset: const Offset(0, 3),
                           ),
@@ -602,7 +655,7 @@ class _PatientChatSheetState extends State<PatientChatSheet> {
             width: 32,
             height: 32,
             decoration: BoxDecoration(
-              color: AppColors.primary.withOpacity(0.1),
+              color: AppColors.primary.withValues(alpha: 0.1),
               shape: BoxShape.circle,
             ),
             child: const Icon(
@@ -624,7 +677,7 @@ class _PatientChatSheetState extends State<PatientChatSheet> {
               ),
               boxShadow: [
                 BoxShadow(
-                  color: Colors.black.withOpacity(0.05),
+                  color: Colors.black.withValues(alpha: 0.05),
                   blurRadius: 8,
                   offset: const Offset(0, 3),
                 ),
@@ -655,7 +708,7 @@ class _PatientChatSheetState extends State<PatientChatSheet> {
         border: const Border(top: BorderSide(color: Color(0xFFE2E8F0))),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.03),
+            color: Colors.black.withValues(alpha: 0.03),
             blurRadius: 8,
             offset: const Offset(0, -4),
           ),
@@ -752,7 +805,7 @@ class _PatientChatSheetState extends State<PatientChatSheet> {
                 shape: BoxShape.circle,
                 boxShadow: [
                   BoxShadow(
-                    color: AppColors.primary.withOpacity(0.35),
+                    color: AppColors.primary.withValues(alpha: 0.35),
                     blurRadius: 10,
                     offset: const Offset(0, 4),
                   ),

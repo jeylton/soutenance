@@ -5,6 +5,9 @@ import 'package:flutter/foundation.dart'
 import 'package:http/http.dart' as http;
 
 class Api {
+  // ⚠️ Mettre à jour cette IP si le backend tourne en local (voir `ipconfig`)
+  static const _localIp = '192.168.100.172';
+
   static String get baseUrl {
     const configured = String.fromEnvironment('API_BASE_URL', defaultValue: '');
     if (configured.trim().isNotEmpty) return configured.trim();
@@ -13,7 +16,7 @@ class Api {
 
     switch (defaultTargetPlatform) {
       case TargetPlatform.android:
-        return 'http://10.0.2.2:5000';
+        return 'http://$_localIp:5000';
       case TargetPlatform.iOS:
       case TargetPlatform.macOS:
       case TargetPlatform.windows:
@@ -456,6 +459,23 @@ class Api {
     throw Exception('Erreur chargement sessions');
   }
 
+  static Future<Map<String, dynamic>> getSession(int sessionId) async {
+    final res = await http.get(
+      Uri.parse('$baseUrl/api/sessions/$sessionId'),
+      headers: _headers,
+    );
+    if (res.statusCode >= 200 && res.statusCode < 300) {
+      final data = json.decode(res.body) as Map<String, dynamic>;
+      return (data['session'] ?? {}) as Map<String, dynamic>;
+    }
+    try {
+      final data = json.decode(res.body) as Map<String, dynamic>;
+      throw Exception(data['error'] ?? 'Erreur chargement session');
+    } catch (_) {
+      throw Exception('Erreur chargement session (${res.statusCode})');
+    }
+  }
+
   // ─── Chat Messages ───
   static Future<void> saveChatMessage(
     int sessionId,
@@ -505,6 +525,21 @@ class Api {
     return [];
   }
 
+  // ─── Streak ───
+  static Future<int> getStreak() async {
+    try {
+      final res = await http.get(
+        Uri.parse('$baseUrl/api/gamification/streak'),
+        headers: _headers,
+      );
+      if (res.statusCode >= 200 && res.statusCode < 300) {
+        final data = json.decode(res.body) as Map<String, dynamic>;
+        return (data['streak'] as num?)?.toInt() ?? 0;
+      }
+    } catch (_) {}
+    return 0;
+  }
+
   // ─── Shop ───
   static Future<Map<String, dynamic>> getShopItems() async {
     final res = await http.get(
@@ -514,7 +549,12 @@ class Api {
     if (res.statusCode >= 200 && res.statusCode < 300) {
       return json.decode(res.body) as Map<String, dynamic>;
     }
-    return {'items': [], 'xp': 0, 'purchases': []};
+    try {
+      final data = json.decode(res.body) as Map<String, dynamic>;
+      throw Exception(data['error'] ?? 'Erreur boutique');
+    } catch (_) {
+      throw Exception('Erreur boutique');
+    }
   }
 
   static Future<Map<String, dynamic>> buyShopItem(String itemId) async {

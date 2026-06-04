@@ -93,7 +93,7 @@ class _CaseHistoryScreenState extends State<CaseHistoryScreen> {
                               width: 44,
                               height: 44,
                               decoration: BoxDecoration(
-                                color: AppColors.primary.withOpacity(0.1),
+                                color: AppColors.primary.withValues(alpha: 0.1),
                                 borderRadius: BorderRadius.circular(12),
                               ),
                               child: const Icon(
@@ -137,7 +137,7 @@ class _CaseHistoryScreenState extends State<CaseHistoryScreen> {
                                         : score >= 10
                                         ? const Color(0xFFF59E0B)
                                         : const Color(0xFFEF4444))
-                                    .withOpacity(0.1),
+                                    .withValues(alpha: 0.1),
                                 borderRadius: BorderRadius.circular(12),
                               ),
                               child: Text(
@@ -366,7 +366,7 @@ class _CaseHistoryScreenState extends State<CaseHistoryScreen> {
         border: Border.all(color: AppColors.border),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.03),
+            color: Colors.black.withValues(alpha: 0.03),
             blurRadius: 16,
             offset: const Offset(0, 6),
           ),
@@ -452,7 +452,7 @@ class _CaseHistoryScreenState extends State<CaseHistoryScreen> {
                     vertical: 8,
                   ),
                   decoration: BoxDecoration(
-                    color: scoreColor.withOpacity(0.1),
+                    color: scoreColor.withValues(alpha: 0.1),
                     borderRadius: BorderRadius.circular(12),
                   ),
                   child: Text(

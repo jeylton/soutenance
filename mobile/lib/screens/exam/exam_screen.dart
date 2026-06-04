@@ -257,7 +257,7 @@ class _ExamScreenState extends State<ExamScreen> {
                                       ? const Color(0xFFCBD5E1)
                                       : const Color(
                                         0xFF8B5CF6,
-                                      ).withOpacity(0.3),
+                                      ).withValues(alpha: 0.3),
                             ),
                           ),
                           child: Material(
@@ -281,7 +281,7 @@ class _ExamScreenState extends State<ExamScreen> {
                                                     ? Colors.grey[300]
                                                     : const Color(
                                                       0xFF8B5CF6,
-                                                    ).withOpacity(0.15),
+                                                    ).withValues(alpha: 0.15),
                                             borderRadius: BorderRadius.circular(
                                               14,
                                             ),

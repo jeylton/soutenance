@@ -9,8 +9,17 @@ const LoginView = ({ onLogin, onForgotPassword, onSupport }) => {
     const [error, setError] = useState('');
     const [loading, setLoading] = useState(false);
     const apiBase = useMemo(() => {
-        const raw = (import.meta.env.VITE_API_URL || 'http://localhost:5000').trim().replace(/\/+$/, '');
-        return raw;
+        const env = String(import.meta.env.VITE_API_URL || '').trim().replace(/\/+$/, '');
+        if (env) return env;
+        const hostname = typeof window !== 'undefined' ? String(window.location?.hostname || '') : '';
+        const protocol = typeof window !== 'undefined' ? String(window.location?.protocol || '') : '';
+
+        // Local dev: keep the classic backend port (use IPv4 loopback to avoid ::1 issues).
+        if (hostname === 'localhost' || hostname === '127.0.0.1') return 'http://127.0.0.1:5000';
+        if (protocol === 'file:') return 'http://127.0.0.1:5000';
+
+        // Otherwise assume API is served from the same origin (recommended for deployments).
+        return typeof window !== 'undefined' ? String(window.location.origin || '').replace(/\/+$/, '') : '';
     }, []);
 
     useEffect(() => {

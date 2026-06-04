@@ -5,12 +5,71 @@ const supabase = require('../config/supabase');
 const { generateToken, authenticate } = require('../middleware/auth');
 const { validate } = require('../middleware/validate');
 
+const isDev = process.env.NODE_ENV !== 'production';
+
+const formatUnexpectedRuntimeError = (error) => {
+  const message = String(error?.message || error || 'unknown error');
+  const causeCode = String(error?.cause?.code || '').trim().toUpperCase();
+  const causeMessage = String(error?.cause?.message || '').trim();
+
+  // When Supabase is unreachable (DNS, offline), supabase-js often throws TypeError('fetch failed').
+  if (/fetch failed/i.test(message) || causeCode === 'ENOTFOUND' || causeCode === 'EAI_AGAIN') {
+    return {
+      httpStatus: 503,
+      publicMessage: 'Impossible de joindre Supabase. Vérifiez SUPABASE_URL (projet Supabase), votre connexion Internet et le DNS.',
+      debug: { message, causeCode: causeCode || undefined, causeMessage: causeMessage || undefined },
+    };
+  }
+
+  return {
+    httpStatus: 500,
+    publicMessage: isDev ? message : 'Erreur serveur',
+    debug: { message, causeCode: causeCode || undefined, causeMessage: causeMessage || undefined },
+  };
+};
+
+const formatDbError = (error) => {
+  if (!error) return null;
+  const message = String(error.message || error);
+
+  // Network/DNS issues reaching Supabase
+  if (/fetch failed/i.test(message) || /getaddrinfo\s+enotfound/i.test(message) || /eai_again/i.test(message)) {
+    return {
+      httpStatus: 503,
+      publicMessage: 'Impossible de joindre Supabase. Vérifiez SUPABASE_URL (projet Supabase), votre connexion Internet et le DNS.',
+      debug: message,
+    };
+  }
+
+  // Common schema drift issues when the DB wasn't migrated to v2.
+  if (/column .*password_hash/i.test(message) || /password_hash.*does not exist/i.test(message)) {
+    return {
+      httpStatus: 500,
+      publicMessage: 'Base de données non migrée: colonne password_hash manquante. Exécutez backend/supabase_schema_v2.sql dans Supabase.',
+      debug: message,
+    };
+  }
+  if (/column .*role/i.test(message) || /role.*does not exist/i.test(message)) {
+    return {
+      httpStatus: 500,
+      publicMessage: 'Base de données non migrée: colonne role manquante. Exécutez backend/supabase_schema_v2.sql dans Supabase.',
+      debug: message,
+    };
+  }
+
+  return {
+    httpStatus: 500,
+    publicMessage: isDev ? message : 'Erreur base de données',
+    debug: message,
+  };
+};
+
 // POST /api/auth/register
 router.post('/register', validate({ body: { email: 'required', password: 'required', full_name: 'required' } }), async (req, res) => {
   const { email, password, full_name, profile_type } = req.body;
   try {
     // Check if user already exists
-    const { data: existing } = await supabase.from('users').select('id').eq('email', email).single();
+    const { data: existing } = await supabase.from('users').select('id').eq('email', email).maybeSingle();
     if (existing) {
       return res.status(409).json({ error: 'Un compte existe déjà avec cet email' });
     }
@@ -18,9 +77,17 @@ router.post('/register', validate({ body: { email: 'required', password: 'requir
     // Hash password
     const password_hash = await bcrypt.hash(password, 12);
 
-    // Map profile_type
-    const profileMap = { 'Étudiant': 'etudiant', 'Médecin': 'medecin', 'Interne': 'interne', 'Autre': 'autre' };
+    // Map profile_type (restricted to 3 profiles)
+    const profileMap = {
+      'Étudiant': 'etudiant',
+      'Médecin': 'medecin',
+      'Joueur': 'joueur',
+    };
     const mappedProfile = profileMap[profile_type] || profile_type || 'etudiant';
+    const allowedProfiles = new Set(['etudiant', 'medecin', 'joueur']);
+    if (!allowedProfiles.has(mappedProfile)) {
+      return res.status(400).json({ error: 'Type de profil invalide (Étudiant, Médecin, Joueur)' });
+    }
 
     // Insert user
     const { data: user, error } = await supabase
@@ -54,13 +121,14 @@ router.post('/login', validate({ body: { email: 'required', password: 'required'
   try {
     const { data: user, error } = await supabase
       .from('users')
-      .select('id,email,full_name,profile_type,role,password_hash,created_at')
+      .select('id,email,full_name,profile_type,role,password_hash,locale,created_at')
       .eq('email', email)
-      .single();
+      .maybeSingle();
 
     // Distinguish DB errors from wrong credentials to avoid misleading 401 messages.
     if (error) {
-      return res.status(500).json({ error: `Erreur base de données: ${error.message}` });
+      const formatted = formatDbError(error);
+      return res.status(formatted.httpStatus).json({ error: formatted.publicMessage, debug: isDev ? formatted.debug : undefined });
     }
 
     if (!user) {
@@ -81,7 +149,8 @@ router.post('/login', validate({ body: { email: 'required', password: 'required'
     const token = generateToken(safeUser);
     return res.json({ token, user: safeUser });
   } catch (e) {
-    return res.status(500).json({ error: e.message });
+    const formatted = formatUnexpectedRuntimeError(e);
+    return res.status(formatted.httpStatus).json({ error: formatted.publicMessage, debug: isDev ? formatted.debug : undefined });
   }
 });
 
@@ -93,11 +162,12 @@ router.post('/login-admin', validate({ body: { email: 'required', password: 'req
       .from('users')
       .select('id,email,full_name,profile_type,role,password_hash,created_at')
       .eq('email', email)
-      .single();
+      .maybeSingle();
 
     // Distinguish DB errors from wrong credentials to avoid misleading 401 messages.
     if (error) {
-      return res.status(500).json({ error: `Erreur base de données: ${error.message}` });
+      const formatted = formatDbError(error);
+      return res.status(formatted.httpStatus).json({ error: formatted.publicMessage, debug: isDev ? formatted.debug : undefined });
     }
 
     if (!user) {
@@ -121,7 +191,8 @@ router.post('/login-admin', validate({ body: { email: 'required', password: 'req
     const token = generateToken(safeUser);
     return res.json({ token, user: safeUser });
   } catch (e) {
-    return res.status(500).json({ error: e.message });
+    const formatted = formatUnexpectedRuntimeError(e);
+    return res.status(formatted.httpStatus).json({ error: formatted.publicMessage, debug: isDev ? formatted.debug : undefined });
   }
 });
 
@@ -130,11 +201,16 @@ router.get('/me', authenticate, async (req, res) => {
   try {
     const { data: user, error } = await supabase
       .from('users')
-      .select('id,email,full_name,profile_type,role,phone,institution,specialty,locale,group_name,created_at')
+      // NOTE: keep this select aligned with backend/supabase_schema_v2.sql.
+      .select('id,email,full_name,profile_type,role,phone,institution,specialty,locale,created_at')
       .eq('id', req.user.id)
       .single();
 
-    if (error || !user) return res.status(404).json({ error: 'Utilisateur non trouvé' });
+    if (error) {
+      const formatted = formatDbError(error);
+      return res.status(formatted.httpStatus).json({ error: formatted.publicMessage, debug: isDev ? formatted.debug : undefined });
+    }
+    if (!user) return res.status(404).json({ error: 'Utilisateur non trouvé' });
 
     // Get XP
     const { data: xp } = await supabase.from('user_xp').select('xp,level').eq('user_id', user.id).single();
@@ -203,7 +279,7 @@ router.post('/social', async (req, res) => {
 
 // PATCH /api/auth/me — update profile
 router.patch('/me', authenticate, async (req, res) => {
-const { full_name, phone, institution, specialty, locale, group_name } = req.body;
+  const { full_name, phone, institution, specialty, locale } = req.body;
   try {
     const update = {};
     if (full_name != null) update.full_name = full_name;
@@ -211,10 +287,12 @@ const { full_name, phone, institution, specialty, locale, group_name } = req.bod
     if (institution != null) update.institution = institution;
     if (specialty != null) update.specialty = specialty;
     if (locale != null) update.locale = locale;
-    if (group_name != null) update.group_name = group_name;
 
     const { error } = await supabase.from('users').update(update).eq('id', req.user.id);
-    if (error) return res.status(500).json({ error: error.message });
+    if (error) {
+      const formatted = formatDbError(error);
+      return res.status(formatted.httpStatus).json({ error: formatted.publicMessage, debug: isDev ? formatted.debug : undefined });
+    }
     return res.json({ ok: true });
   } catch (e) {
     return res.status(500).json({ error: e.message });

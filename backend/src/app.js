@@ -1,9 +1,19 @@
-require('dotenv').config();
+const fs = require('fs');
+const path = require('path');
+
+// Always load backend/.env, even if started from another working directory.
+// Falls back to default dotenv search when backend/.env is missing.
+const backendEnvPath = path.join(__dirname, '..', '.env');
+if (fs.existsSync(backendEnvPath)) {
+  require('dotenv').config({ path: backendEnvPath });
+} else {
+  require('dotenv').config();
+}
+
 const express = require('express');
 const cors = require('cors');
 const morgan = require('morgan');
 const helmet = require('helmet');
-const path = require('path');
 const supabase = require('./config/supabase');
 
 const app = express();

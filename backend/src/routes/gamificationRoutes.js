@@ -9,6 +9,109 @@ const { authenticate } = require('../middleware/auth');
 const PURCHASES_FILE = path.join(__dirname, '../../data/purchases.json');
 const QUIZ_ATTEMPTS_FILE = path.join(__dirname, '../../data/quiz_attempts.json');
 
+function starsFromCaseScore(score20) {
+  const s = Math.max(0, Math.min(20, Number(score20) || 0));
+  if (s >= 17) return 3;
+  if (s >= 12) return 2;
+  if (s > 0) return 1;
+  return 0;
+}
+
+function starsFromQuizAccuracy(accuracy) {
+  const a = Math.max(0, Math.min(1, Number(accuracy) || 0));
+  if (a <= 0) return 0;
+  if (a >= 0.85) return 3;
+  if (a >= 0.60) return 2;
+  return 1;
+}
+
+function computeQuizTrophies(attempts) {
+  const bestByKey = new Map();
+  for (const entry of Array.isArray(attempts) ? attempts : []) {
+    const quizKey = String(entry?.quiz_key || '').trim();
+    if (!quizKey) continue;
+
+    let accuracy = Number(entry?.accuracy);
+    if (!Number.isFinite(accuracy) || accuracy <= 0) {
+      const good = Number(entry?.score) || 0;
+      const total = Number(entry?.total) || 0;
+      accuracy = total > 0 ? (good / total) : 0;
+    }
+    const stars = starsFromQuizAccuracy(accuracy);
+    const prev = bestByKey.get(quizKey) || 0;
+    if (stars > prev) bestByKey.set(quizKey, stars);
+  }
+  let sum = 0;
+  for (const v of bestByKey.values()) sum += v;
+  return sum;
+}
+
+async function computeTrophiesForUser(userId) {
+  const uid = String(userId || '').trim();
+  if (!uid) return { trophies: 0, cases: 0, quiz: 0 };
+
+  // Cases: best score per case_id → stars.
+  const { data: sessions } = await supabase
+    .from('sessions')
+    .select('case_id,score')
+    .eq('user_id', uid)
+    .not('score', 'is', null);
+
+  const bestScoreByCaseId = new Map();
+  for (const s of Array.isArray(sessions) ? sessions : []) {
+    const caseId = Number(s?.case_id) || 0;
+    if (caseId <= 0) continue;
+    const score = Number(s?.score) || 0;
+    const prev = bestScoreByCaseId.get(caseId);
+    if (prev == null || score > prev) bestScoreByCaseId.set(caseId, score);
+  }
+  let caseTrophies = 0;
+  for (const best of bestScoreByCaseId.values()) {
+    caseTrophies += starsFromCaseScore(best);
+  }
+
+  // Quiz: best accuracy per quiz_key → stars.
+  const attemptsDb = loadQuizAttempts();
+  const quizAttempts = Array.isArray(attemptsDb[uid]) ? attemptsDb[uid] : [];
+  const quizTrophies = computeQuizTrophies(quizAttempts);
+
+  return { trophies: caseTrophies + quizTrophies, cases: caseTrophies, quiz: quizTrophies };
+}
+
+function levelFromTrophies(trophies) {
+  const t = Math.max(0, Number(trophies) || 0);
+  return Math.floor(t / 10) + 1;
+}
+
+function computeCaseTrophiesFromSessions(sessions) {
+  const bestByUserCase = new Map();
+  for (const row of Array.isArray(sessions) ? sessions : []) {
+    const userId = String(row?.user_id || '').trim();
+    const caseId = Number(row?.case_id) || 0;
+    if (!userId || caseId <= 0) continue;
+    const key = `${userId}:${caseId}`;
+    const score = Number(row?.score) || 0;
+    const prev = bestByUserCase.get(key);
+    if (prev == null || score > prev) bestByUserCase.set(key, score);
+  }
+
+  const totals = new Map();
+  for (const [key, bestScore] of bestByUserCase.entries()) {
+    const userId = key.split(':')[0];
+    totals.set(userId, (totals.get(userId) || 0) + starsFromCaseScore(bestScore));
+  }
+  return totals;
+}
+
+function chunkArray(values, chunkSize) {
+  const size = Math.max(1, Number(chunkSize) || 1);
+  const chunks = [];
+  for (let i = 0; i < values.length; i += size) {
+    chunks.push(values.slice(i, i + size));
+  }
+  return chunks;
+}
+
 function loadPurchases() {
   try { return JSON.parse(fs.readFileSync(PURCHASES_FILE, 'utf8')); }
   catch { return {}; }
@@ -40,9 +143,29 @@ router.get('/me', authenticate, async (req, res) => {
       .select('earned_at,badges(id,name,description,icon)')
       .eq('user_id', userId);
 
+    // Trophies = stars from best case scores + best quiz accuracies (no bonus).
+    const trophyTotals = await computeTrophiesForUser(userId);
+    const trophiesLevel = levelFromTrophies(trophyTotals.trophies);
+
+    // Keep DB level in sync (XP remains currency only).
+    try {
+      const existing = await supabase.from('user_xp').select('xp,level').eq('user_id', userId).single();
+      if (!existing?.data) {
+        await supabase.from('user_xp').insert([{ user_id: userId, xp: 0, level: trophiesLevel }]);
+      } else {
+        await supabase
+          .from('user_xp')
+          .update({ level: trophiesLevel, updated_at: new Date().toISOString() })
+          .eq('user_id', userId);
+      }
+    } catch (_) {}
+
     return res.json({
       xp: xp?.xp || 0,
-      level: xp?.level || 1,
+      level: trophiesLevel,
+      trophies: trophyTotals.trophies,
+      trophies_cases: trophyTotals.cases,
+      trophies_quiz: trophyTotals.quiz,
       badges: (badges || []).map(b => ({ ...b.badges, earned_at: b.earned_at })),
     });
   } catch (e) {
@@ -50,17 +173,82 @@ router.get('/me', authenticate, async (req, res) => {
   }
 });
 
-// ─── GET /api/gamification/leaderboard — Top students by XP ───
+// ─── GET /api/gamification/leaderboard — Top users by trophies ───
 router.get('/leaderboard', async (_req, res) => {
   try {
-    const { data, error } = await supabase
-      .from('user_xp')
-      .select('xp,level,user_id,users(full_name,profile_type)')
-      .order('xp', { ascending: false })
-      .limit(20);
+    // Fetch all users with XP rows (used for currency + level metadata).
+    const allXpRows = [];
+    const pageSize = 1000;
+    for (let from = 0; ; from += pageSize) {
+      const { data, error } = await supabase
+        .from('user_xp')
+        .select('xp,level,user_id,users(full_name,profile_type)')
+        .range(from, from + pageSize - 1);
+      if (error) return res.status(500).json({ error: error.message });
+      allXpRows.push(...(data || []));
+      if (!data || data.length < pageSize) break;
+    }
 
-    if (error) return res.status(500).json({ error: error.message });
-    return res.json({ leaderboard: data || [] });
+    const userIds = allXpRows.map((r) => r.user_id).filter(Boolean);
+
+    if (userIds.length === 0) {
+      return res.json({ leaderboard: [] });
+    }
+
+    // Fetch sessions for those users and compute best-stars trophies for cases.
+    const allSessions = [];
+    const userChunks = chunkArray(userIds, 200);
+    for (const chunk of userChunks) {
+      for (let from = 0; ; from += pageSize) {
+        const { data, error } = await supabase
+          .from('sessions')
+          .select('user_id,case_id,score')
+          .in('user_id', chunk)
+          .not('score', 'is', null)
+          .range(from, from + pageSize - 1);
+        if (error) return res.status(500).json({ error: error.message });
+        allSessions.push(...(data || []));
+        if (!data || data.length < pageSize) break;
+      }
+    }
+    const caseTrophiesByUser = computeCaseTrophiesFromSessions(allSessions);
+
+    // Quiz trophies from file store.
+    const attemptsDb = loadQuizAttempts();
+    const quizTrophiesByUser = new Map();
+    for (const id of userIds) {
+      const uid = String(id);
+      const attempts = Array.isArray(attemptsDb[uid]) ? attemptsDb[uid] : [];
+      quizTrophiesByUser.set(uid, computeQuizTrophies(attempts));
+    }
+
+    const enriched = allXpRows.map((row) => {
+      const uid = String(row.user_id);
+      const caseT = caseTrophiesByUser.get(uid) || 0;
+      const quizT = quizTrophiesByUser.get(uid) || 0;
+      const trophies = caseT + quizT;
+      return {
+        ...row,
+        trophies,
+        trophies_cases: caseT,
+        trophies_quiz: quizT,
+        level: levelFromTrophies(trophies),
+      };
+    });
+
+    enriched.sort((a, b) => {
+      const ta = Number(a.trophies) || 0;
+      const tb = Number(b.trophies) || 0;
+      if (tb !== ta) return tb - ta;
+      const la = Number(a.level) || 1;
+      const lb = Number(b.level) || 1;
+      if (lb !== la) return lb - la;
+      const xa = Number(a.xp) || 0;
+      const xb = Number(b.xp) || 0;
+      return xb - xa;
+    });
+
+    return res.json({ leaderboard: enriched.slice(0, 20) });
   } catch (e) {
     return res.status(500).json({ error: e.message });
   }
@@ -111,9 +299,9 @@ router.get('/shop', authenticate, async (req, res) => {
     const allPurchases = loadPurchases();
     const purchases = allPurchases[userId] || [];
 
-    // Get user level
-    const { data: xpFull } = await supabase.from('user_xp').select('xp,level').eq('user_id', userId).single();
-    const userLevel = xpFull?.level || 1;
+    // Get user level (derived from trophies).
+    const trophyTotals = await computeTrophiesForUser(userId);
+    const userLevel = levelFromTrophies(trophyTotals.trophies);
 
     const items = SHOP_ITEMS.map(item => ({
       ...item,
@@ -147,9 +335,9 @@ router.post('/shop/buy', authenticate, async (req, res) => {
     const item = SHOP_ITEMS.find(i => i.id === itemId);
     if (!item) return res.status(404).json({ error: 'Article introuvable' });
 
-    // Check level requirement
-    const { data: lvlRow } = await supabase.from('user_xp').select('level').eq('user_id', userId).single();
-    const userLevel = lvlRow?.level || 1;
+    // Check level requirement (derived from trophies)
+    const trophyTotals = await computeTrophiesForUser(userId);
+    const userLevel = levelFromTrophies(trophyTotals.trophies);
     if ((item.minLevel || 1) > userLevel) {
       return res.status(403).json({ error: `Niveau ${item.minLevel} requis`, needed_level: item.minLevel, current_level: userLevel });
     }
@@ -171,26 +359,41 @@ router.post('/shop/buy', authenticate, async (req, res) => {
       return res.status(400).json({ error: 'XP insuffisant', needed: item.price, current: currentXP });
     }
 
-    // Deduct XP
+    // Deduct XP (currency only). Level is based on trophies.
     const newXP = currentXP - item.price;
-    const newLevel = Math.floor(newXP / 500) + 1;
 
-    await supabase.from('user_xp').update({
-      xp: newXP,
-      level: newLevel,
-      updated_at: new Date().toISOString(),
-    }).eq('user_id', userId);
+    await supabase
+      .from('user_xp')
+      .update({
+        xp: newXP,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('user_id', userId);
+
+    const { data: lvlAfter } = await supabase
+      .from('user_xp')
+      .select('level')
+      .eq('user_id', userId)
+      .single();
 
     // Save purchase
     purchases.push(itemId);
     allPurchases[userId] = purchases;
     savePurchases(allPurchases);
 
+    // Recalculate hint balance after purchase
+    const hintPurchasesAfter = purchases.filter(p => p === 'hint_pack_3' || p === 'hint_pack_10');
+    let totalHintsAfter = 0;
+    for (const hp of hintPurchasesAfter) totalHintsAfter += hp === 'hint_pack_3' ? 3 : 10;
+    const usedHintsAfter = purchases.filter(p => p === 'hint_used').length;
+    const hintBalanceAfter = Math.max(0, totalHintsAfter - usedHintsAfter);
+
     return res.json({
       success: true,
       item: item.name,
       xp_remaining: newXP,
-      level: newLevel,
+      level: lvlAfter?.level || userLevel,
+      hintBalance: hintBalanceAfter,
       purchases,
     });
   } catch (e) {
@@ -310,7 +513,27 @@ router.post('/quiz-reward', authenticate, async (req, res) => {
     const basePoints = Math.round((accuracy * 100) + (speedBonus * 100));
     const baseXP = Math.round(60 + (accuracy * 140) + (speedBonus * 40));
     const pointsEarned = Math.max(0, Math.round(basePoints * replayScale));
-    const xpEarned = Math.max(1, Math.round(baseXP * replayScale));
+    let xpEarned = Math.max(1, Math.round(baseXP * replayScale));
+
+    // Apply XP boost (money) if user owns at least one and hasn't consumed it yet.
+    // Stored as purchases in purchases.json (no DB migration).
+    try {
+      const allPurchases = loadPurchases();
+      const purchases = Array.isArray(allPurchases[userId]) ? allPurchases[userId] : [];
+      const bought = purchases.filter((p) => p === 'xp_boost').length;
+      const used = purchases.filter((p) => p === 'xp_boost_used').length;
+      const balance = bought - used;
+
+      if (balance > 0) {
+        xpEarned = xpEarned * 2;
+        purchases.push('xp_boost_used');
+        allPurchases[userId] = purchases;
+        savePurchases(allPurchases);
+      }
+    } catch (e) {
+      // Non-blocking: scoring should still work even if purchases store fails.
+      console.warn('Failed to apply XP boost:', e.message);
+    }
 
     userEntries.push({
       quiz_key: quizKey,
@@ -393,7 +616,7 @@ const awardXP = async (userId, points) => {
       await supabase.from('user_xp').insert([{ user_id: userId, xp: points, level: 1 }]);
     } else {
       const newXP = (current.xp || 0) + points;
-      // XP is now used as currency only; level is managed by points logic.
+      // XP is used as currency only; level is derived from trophies.
       await supabase.from('user_xp').update({ xp: newXP, updated_at: new Date().toISOString() }).eq('user_id', userId);
     }
   } catch (e) {
@@ -401,10 +624,10 @@ const awardXP = async (userId, points) => {
   }
 };
 
-const setLevelFromPoints = async (userId, totalPoints) => {
+const setLevelFromPoints = async (userId, _ignored) => {
   try {
-    const safePoints = Math.max(0, Number(totalPoints) || 0);
-    const levelFromPoints = Math.floor(safePoints / 1000) + 1;
+    const { trophies } = await computeTrophiesForUser(userId);
+    const level = levelFromTrophies(trophies);
 
     const { data: current } = await supabase
       .from('user_xp')
@@ -415,16 +638,16 @@ const setLevelFromPoints = async (userId, totalPoints) => {
     if (!current) {
       await supabase
         .from('user_xp')
-        .insert([{ user_id: userId, xp: 0, level: levelFromPoints }]);
-      return levelFromPoints;
+        .insert([{ user_id: userId, xp: 0, level }]);
+      return level;
     }
 
     await supabase
       .from('user_xp')
-      .update({ level: levelFromPoints, updated_at: new Date().toISOString() })
+      .update({ level, updated_at: new Date().toISOString() })
       .eq('user_id', userId);
 
-    return levelFromPoints;
+    return level;
   } catch (e) {
     console.warn('Failed to set level from points:', e.message);
     return null;
@@ -475,6 +698,52 @@ const checkAndAwardBadges = async (userId) => {
     return 0;
   }
 };
+
+// ─── GET /api/gamification/streak — Série de jours consécutifs ───────────────
+router.get('/streak', authenticate, async (req, res) => {
+  try {
+    const userId = req.user.id;
+
+    // Récupère les jours distincts où l'utilisateur a terminé une session (score non null)
+    const { data: rows, error } = await supabase
+      .from('sessions')
+      .select('created_at')
+      .eq('user_id', userId)
+      .not('score', 'is', null)
+      .order('created_at', { ascending: false })
+      .limit(365);
+
+    if (error) return res.status(500).json({ error: error.message });
+
+    // Extraire les dates uniques (YYYY-MM-DD)
+    const activeDays = new Set(
+      (rows || []).map((r) => new Date(r.created_at).toISOString().slice(0, 10))
+    );
+
+    // Calculer les jours consécutifs à partir d'aujourd'hui ou d'hier
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    const toKey = (d) => d.toISOString().slice(0, 10);
+
+    let streak = 0;
+    const cursor = new Date(today);
+
+    // Si pas actif aujourd'hui, commencer depuis hier
+    if (!activeDays.has(toKey(cursor))) {
+      cursor.setDate(cursor.getDate() - 1);
+    }
+
+    while (activeDays.has(toKey(cursor))) {
+      streak += 1;
+      cursor.setDate(cursor.getDate() - 1);
+    }
+
+    return res.json({ streak, lastActiveDate: streak > 0 ? toKey(new Date(today)) : null });
+  } catch (e) {
+    return res.status(500).json({ error: e.message });
+  }
+});
 
 module.exports = router;
 module.exports.awardXP = awardXP;

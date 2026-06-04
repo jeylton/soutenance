@@ -82,7 +82,7 @@ class PatientRecordSheet extends StatelessWidget {
                 Container(
                   padding: const EdgeInsets.all(10),
                   decoration: BoxDecoration(
-                    color: AppColors.primary.withOpacity(0.1),
+                    color: AppColors.primary.withValues(alpha: 0.1),
                     borderRadius: BorderRadius.circular(12),
                   ),
                   child: const Icon(
@@ -158,7 +158,7 @@ class PatientRecordSheet extends StatelessWidget {
                           _buildSection(
                             icon: LucideIcons.user,
                             iconColor: AppColors.primary,
-                            iconBg: AppColors.primary.withOpacity(0.1),
+                            iconBg: AppColors.primary.withValues(alpha: 0.1),
                             title: 'Antécédents Personnels',
                             child: _buildListCard(antecedentsPerso),
                           ),
@@ -284,7 +284,7 @@ class PatientRecordSheet extends StatelessWidget {
         borderRadius: BorderRadius.circular(16),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.03),
+            color: Colors.black.withValues(alpha: 0.03),
             blurRadius: 8,
             offset: const Offset(0, 2),
           ),
@@ -335,7 +335,7 @@ class PatientRecordSheet extends StatelessWidget {
         borderRadius: BorderRadius.circular(16),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.03),
+            color: Colors.black.withValues(alpha: 0.03),
             blurRadius: 8,
             offset: const Offset(0, 2),
           ),
@@ -455,7 +455,7 @@ class PatientRecordSheet extends StatelessWidget {
                   Container(
                     padding: const EdgeInsets.all(8),
                     decoration: BoxDecoration(
-                      color: const Color(0xFF22C55E).withOpacity(0.1),
+                      color: const Color(0xFF22C55E).withValues(alpha: 0.1),
                       borderRadius: BorderRadius.circular(10),
                     ),
                     child: const Icon(
@@ -512,7 +512,7 @@ class PatientRecordSheet extends StatelessWidget {
         borderRadius: BorderRadius.circular(16),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.03),
+            color: Colors.black.withValues(alpha: 0.03),
             blurRadius: 8,
             offset: const Offset(0, 2),
           ),

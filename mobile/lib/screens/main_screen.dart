@@ -3,7 +3,7 @@ import 'package:lucide_icons/lucide_icons.dart';
 import 'package:provider/provider.dart';
 import '../theme/app_theme.dart';
 import '../state/session_state.dart';
-import 'home/home_screen.dart';
+import 'home/specialty_selection_screen.dart';
 import 'stats/stats_screen.dart';
 import 'courses/quiz_screen.dart';
 import 'profile/profile_screen.dart';
@@ -19,7 +19,7 @@ class _MainScreenState extends State<MainScreen> {
   int _currentIndex = 0;
 
   final List<Widget> _screens = [
-    const HomeScreen(),
+    const SpecialtySelectionScreen(),
     const StatsScreen(),
     const QuizScreen(),
     const ProfileScreen(),
@@ -35,7 +35,7 @@ class _MainScreenState extends State<MainScreen> {
           color: Colors.white,
           boxShadow: [
             BoxShadow(
-              color: Colors.black.withOpacity(0.05),
+              color: Colors.black.withValues(alpha: 0.05),
               blurRadius: 20,
               offset: const Offset(0, -5),
             ),

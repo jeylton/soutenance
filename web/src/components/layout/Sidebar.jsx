@@ -7,8 +7,7 @@ import {
     BarChart3,
     Settings,
     LogOut,
-    Plus,
-    ClipboardCheck
+    Plus
 } from 'lucide-react';
 import { AuthContext } from '../../App';
 
@@ -50,7 +49,6 @@ const Sidebar = ({ activeTab, onTabChange, onLogout }) => {
                 <SidebarItem id="cases" icon={BookOpen} label="Cas Cliniques" activeTab={activeTab} onClick={onTabChange} />
                 <SidebarItem id="courses" icon={FileText} label="Quiz" activeTab={activeTab} onClick={onTabChange} />
                 <SidebarItem id="analytics" icon={BarChart3} label="Analytique" activeTab={activeTab} onClick={onTabChange} />
-                <SidebarItem id="exams" icon={ClipboardCheck} label="Examens" activeTab={activeTab} onClick={onTabChange} />
 
                 <div className="mt-12 pt-10 border-t border-[#152924]">
                     <p className="text-[10px] uppercase tracking-[0.3em] text-slate-600 mb-6 px-4 font-black">SYSTÈME</p>

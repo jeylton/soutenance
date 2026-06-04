@@ -1,190 +1,174 @@
 const axios = require('axios');
 const { resolveAvatarProfile } = require('./avatarVoiceProfile');
 
+let warnedMissingGroqKey = false;
+let warnedMissingLlamaLocalKey = false;
+
 // ═══════════════════════════════════════════════════════════
-//  DICA CLINIC — Intelligent Patient LLM Service
-//  Priority: 1) Groq (free cloud) → 2) Ollama (local) → 3) Smart fallback
+//  DICA CLINIC — LLM Service
+//  Providers supported: 1) Groq (cloud) 2) Local Llama (LM Studio)
+//  Note: Gemini/Ollama/fallback were removed by request.
 // ═══════════════════════════════════════════════════════════
 
-// ─── 1. GROQ Cloud LLM (free, fast, intelligent) ───
+function uniqueStrings(values) {
+    const out = [];
+    const seen = new Set();
+    for (const v of values || []) {
+        const s = String(v || '').trim();
+        if (!s || seen.has(s)) continue;
+        seen.add(s);
+        out.push(s);
+    }
+    return out;
+}
 
-async function callGroq(systemPrompt, userMessage) {
-    const apiKey = process.env.GROQ_API_KEY;
-    if (!apiKey) return null;
+function normalizeProviderName(value) {
+    const raw = String(value || '').trim().toLowerCase();
+    if (!raw) return '';
+    if (raw === 'llama' || raw === 'llama-local' || raw === 'lmstudio') return 'llama';
+    return raw;
+}
+
+function isGroqRequired() {
+    const raw = String(process.env.GROQ_REQUIRED || '').trim().toLowerCase();
+    return raw === '1' || raw === 'true' || raw === 'yes' || raw === 'on';
+}
+
+function isLlamaRequired() {
+    const raw = String(process.env.LLAMA_REQUIRED || process.env.LMSTUDIO_REQUIRED || '').trim().toLowerCase();
+    return raw === '1' || raw === 'true' || raw === 'yes' || raw === 'on';
+}
+
+function getPrimaryLlmProvider() {
+    if (isGroqRequired()) return 'groq';
+    if (isLlamaRequired()) return 'llama';
+
+    const configured = normalizeProviderName(process.env.LLM_PROVIDER || process.env.LLM_PRIMARY || '');
+    if (configured === 'groq' || configured === 'llama') return configured;
+
+    // Default: if Groq key exists, prefer Groq; otherwise fall back to local Llama.
+    const groqKey = String(process.env.GROQ_API_KEY || '').trim();
+    if (groqKey) return 'groq';
+    return 'llama';
+}
+
+function getOtherProvider(providerName) {
+    return providerName === 'groq' ? 'llama' : 'groq';
+}
+
+function isProviderRequired(providerName) {
+    if (providerName === 'groq') return isGroqRequired();
+    if (providerName === 'llama') return isLlamaRequired();
+    return false;
+}
+
+function getProviderCall(providerName) {
+    return providerName === 'groq' ? callGroq : callLlamaLocal;
+}
+
+async function callOpenAiCompatible({
+    providerLabel,
+    apiKey,
+    baseURL,
+    modelId,
+    systemPrompt,
+    userMessage,
+    options,
+}) {
+    const key = String(apiKey || '').trim();
+    if (!key) return null;
+
+    const resolvedModelId = String(modelId || '').trim();
+    if (!resolvedModelId) return null;
+
+    const resolvedBaseURL = String(baseURL || '').trim();
+
+    const temperature = Number.isFinite(Number(options?.temperature)) ? Number(options.temperature) : 0.7;
+    const maxOutputTokens = Number.isFinite(Number(options?.maxOutputTokens))
+        ? Number(options.maxOutputTokens)
+        : (Number.isFinite(Number(options?.max_tokens)) ? Number(options.max_tokens) : 300);
+    const timeoutMs = Number.isFinite(Number(options?.timeoutMs)) ? Number(options.timeoutMs) : 20000;
 
     try {
-        const response = await axios.post(
-            'https://api.groq.com/openai/v1/chat/completions',
-            {
-                model: process.env.GROQ_MODEL || 'llama-3.3-70b-versatile',
-                messages: [
-                    { role: 'system', content: systemPrompt },
-                    { role: 'user', content: userMessage },
-                ],
-                temperature: 0.7,
-                max_tokens: 300,
-            },
-            {
-                headers: {
-                    'Authorization': `Bearer ${apiKey}`,
-                    'Content-Type': 'application/json',
-                },
-                timeout: 10000,
-            }
-        );
+        const ai = await import('ai');
+        const openaiSdk = await import('@ai-sdk/openai');
 
-        const reply = response.data?.choices?.[0]?.message?.content;
-        if (reply) {
-            console.log('✓ Groq response received');
-            return reply.trim();
-        }
-        return null;
+        const provider = openaiSdk.createOpenAI({
+            apiKey: key,
+            ...(resolvedBaseURL ? { baseURL: resolvedBaseURL } : {}),
+            ...(providerLabel ? { name: providerLabel } : {}),
+        });
+
+        const { text } = await ai.generateText({
+            model: provider.chat(resolvedModelId),
+            system: String(systemPrompt || ''),
+            prompt: String(userMessage || ''),
+            temperature,
+            maxOutputTokens,
+            timeout: timeoutMs,
+        });
+
+        const out = String(text || '').trim();
+        if (!out) return null;
+        console.log(`✓ ${providerLabel || 'LLM'} response received`);
+        return out;
     } catch (error) {
-        console.warn('Groq unavailable:', error.response?.data?.error?.message || error.message);
+        const msg = String(error?.message || 'unknown error');
+        console.warn(`${providerLabel || 'LLM'} unavailable (${resolvedBaseURL}):`, msg);
+        // Store last error reason for better user-facing messages
+        callOpenAiCompatible._lastError = `${providerLabel}: ${msg}`;
         return null;
     }
 }
 
-// ─── 2. Ollama Local LLM ───
-
-async function callOllama(prompt) {
-    if (!process.env.LLM_API_URL) return null;
-
-    try {
-        const response = await axios.post(
-            process.env.LLM_API_URL,
-            {
-                model: process.env.LLM_MODEL || 'llama2',
-                prompt: prompt,
-                stream: false,
-            },
-            { timeout: 5000 }
-        );
-        if (response.data?.response) {
-            console.log('✓ Ollama response received');
-            return response.data.response.trim();
+async function callGroq(systemPrompt, userMessage, options = {}) {
+    const apiKey = String(process.env.GROQ_API_KEY || '').trim();
+    if (!apiKey) {
+        if (!warnedMissingGroqKey) {
+            warnedMissingGroqKey = true;
+            console.warn('Groq disabled: missing GROQ_API_KEY in backend/.env');
         }
         return null;
-    } catch (error) {
-        console.warn('Ollama unavailable:', error.message);
-        return null;
     }
+
+    const baseURL = String(process.env.GROQ_BASE_URL || 'https://api.groq.com/openai/v1').trim();
+    const modelId = String(process.env.GROQ_MODEL || 'llama-3.1-8b-instant').trim();
+
+    return callOpenAiCompatible({
+        providerLabel: 'Groq',
+        apiKey,
+        baseURL,
+        modelId,
+        systemPrompt,
+        userMessage,
+        options,
+    });
 }
 
-// ─── 3. Smart fallback (keyword-based, last resort) ───
+async function callLlamaLocal(systemPrompt, userMessage, options = {}) {
+    // Local Llama via LM Studio OpenAI-compatible server.
+    // Accept both new LLAMA_* vars and legacy OPENAI_* vars to avoid breaking existing setups.
+    const apiKey = String(process.env.LLAMA_API_KEY || process.env.OPENAI_API_KEY || 'lmstudio').trim();
+    const baseURL = String(process.env.LLAMA_BASE_URL || process.env.OPENAI_BASE_URL || 'http://127.0.0.1:1234/v1').trim();
+    const modelId = String(process.env.LLAMA_MODEL || process.env.OPENAI_MODEL || '').trim();
 
-function smartFallback(prompt) {
-    const symptomsMatch = prompt.match(/Symptômes initiaux:\s*(.+)/i);
-    const historyMatch = prompt.match(/Historique médical:\s*(.+)/i);
-    const questionMatch = prompt.match(/Question du médecin:\s*(.+)/i);
-
-    const symptoms = symptomsMatch ? symptomsMatch[1].trim() : '';
-    const history = historyMatch ? historyMatch[1].trim() : '';
-    const question = questionMatch ? questionMatch[1].trim().toLowerCase() : '';
-
-    if (!question) {
-        return symptoms
-            ? `Bonjour Docteur. ${symptoms}. Je suis inquiet et j'aimerais avoir votre avis.`
-            : "Bonjour Docteur. Je ne me sens pas très bien ces derniers temps.";
-    }
-
-    // Greetings
-    if (/^(bonjour|salut|bonsoir|hello|coucou)/i.test(question)) {
-        return symptoms
-            ? `Bonjour Docteur. Merci de me recevoir. En fait, ${symptoms.toLowerCase()}.`
-            : "Bonjour Docteur. Merci de me recevoir. Je ne me sens pas bien depuis quelque temps.";
-    }
-
-    // Sleep
-    if (/sommeil|dorm|dort|nuit|insomnie|r[eé]veil|repos/i.test(question)) {
-        return "Je dors mal depuis que ces symptômes ont commencé. Je me réveille souvent la nuit à cause de l'inconfort.";
-    }
-
-    // Fatigue
-    if (/fatigu[eé]|[eé]puis[eé]|[eé]nergie|force/i.test(question)) {
-        return symptoms.match(/fatigu|asth[eé]n/i)
-            ? "Oui, je suis très fatigué. C'est d'ailleurs un de mes symptômes principaux, cette fatigue qui ne passe pas."
-            : "Je me sens un peu fatigué, mais c'est surtout mes autres symptômes qui me préoccupent.";
-    }
-
-    // Duration
-    if (/depuis|combien.*temps|quand.*commenc|d[eé]but|dur[eé]e|il y a/i.test(question)) {
-        return "Ça a commencé il y a environ une semaine, mais ça s'aggrave de jour en jour.";
-    }
-
-    // Symptoms / what's wrong
-    if (/qu.*(est-ce|problème|plaig|arrive|amène|mal|douleur|ressent)/i.test(question) ||
-        /comment.*(?:allez|sentez|vous)/i.test(question) ||
-        /quel.*(?:symptôme|problème|plainte|motif)/i.test(question)) {
-        return symptoms
-            ? `En fait Docteur, ${symptoms.toLowerCase()}. C'est ce qui m'inquiète le plus.`
-            : "Je me sens fatigué et j'ai des douleurs qui m'empêchent de mener mes activités normalement.";
-    }
-
-    // Location
-    if (/o[uù].*(?:douleur|mal|fait|exactement|localis)|localis|endroit|zone|o[uù].*mal/i.test(question)) {
-        return "C'est assez localisé, je peux vous montrer exactement l'endroit où j'ai mal.";
-    }
-
-    // Medical history
-    if (/ant[eé]c[eé]d|historique|pass[eé]|d[eé]j[aà].*eu|op[eé]ra|hospitalis|chirurg/i.test(question)) {
-        if (history && history !== '{}' && history.length > 5) {
-            try {
-                const h = JSON.parse(history);
-                if (typeof h === 'object' && Object.keys(h).length > 0) {
-                    const items = Object.entries(h).map(([k, v]) => {
-                        if (typeof v === 'object') v = JSON.stringify(v);
-                        return `${k}: ${v}`;
-                    }).join(', ');
-                    return `Dans mes antécédents, j'ai ${items}. À part ça, rien de particulier.`;
-                }
-            } catch (_) {
-                return `Dans mes antécédents, ${history}. Sinon, je n'ai pas eu de problèmes majeurs.`;
-            }
+    if (!modelId) {
+        if (!warnedMissingLlamaLocalKey) {
+            warnedMissingLlamaLocalKey = true;
+            console.warn('Local Llama disabled: missing LLAMA_MODEL (or OPENAI_MODEL) in backend/.env');
         }
-        return "Non, je n'ai pas d'antécédents médicaux particuliers.";
+        return null;
     }
 
-    // Allergies
-    if (/allerg/i.test(question)) return "Non, je n'ai pas d'allergies connues.";
-
-    // Medications
-    if (/m[eé]dicament|traitement|prend|prenez|comprim/i.test(question)) {
-        return "Je n'ai pas pris de médicaments particuliers. Peut-être du paracétamol de temps en temps.";
-    }
-
-    // Family
-    if (/famille|familial|parent|p[eè]re|m[eè]re|fr[eè]re/i.test(question)) {
-        return "Pas vraiment de maladies particulières dans ma famille.";
-    }
-
-    // Fever
-    if (/fi[eè]vre|temp[eé]rature|chaud|frisson/i.test(question)) {
-        return symptoms.match(/fi[eè]vre|temp[eé]rature|f[eé]brile/i)
-            ? "Oui, j'ai eu de la fièvre, surtout le soir. Je dirais autour de 38,5°C."
-            : "Non, je n'ai pas remarqué de fièvre.";
-    }
-
-    // Appetite
-    if (/app[eé]tit|mang|nourrit|repas|faim|poids/i.test(question)) {
-        return "Mon appétit a diminué ces derniers jours. Je mange moins qu'avant.";
-    }
-
-    // Examination
-    if (/examen|ausculter|examiner|toucher|palper|test|analyse|bilan|radio/i.test(question)) {
-        return "Oui bien sûr, Docteur. Faites ce que vous jugez nécessaire.";
-    }
-
-    // Tobacco / alcohol
-    if (/tabac|fum|cigarette|alcool|boi|drogue/i.test(question)) {
-        return "Non, je ne fume pas et je bois très rarement.";
-    }
-
-    // Default
-    if (symptoms) {
-        return `C'est une bonne question. Ce qui me préoccupe surtout c'est ${symptoms.toLowerCase()}.`;
-    }
-    return "Je ne suis pas sûr, Docteur. Pouvez-vous reformuler votre question ?";
+    return callOpenAiCompatible({
+        providerLabel: 'Llama',
+        apiKey,
+        baseURL,
+        modelId,
+        systemPrompt,
+        userMessage,
+        options,
+    });
 }
 
 function stripInterpretationFromResult(value) {
@@ -200,6 +184,60 @@ function stripInterpretationFromResult(value) {
 
     text = text.replace(/\s*(compatible avec|en faveur de|sugg[eè]re|[eé]voque|oriente vers)\b.*$/i, '').trim();
     return text;
+}
+
+function normalizePatientKnownText(value) {
+    let text = String(value || '').replace(/\r/g, '').trim();
+    if (!text) return '';
+
+    // Remove typical teacher/medical-summary phrasing that leaks specialty/diagnosis.
+    text = text
+        .replace(/^\s*(le|la)\s+patient\s+/i, '')
+        .replace(/\b(le|la)\s+patient\b/gi, 'je')
+        .replace(/\bje\s+pr[eé]sente\b/gi, "j'ai")
+        .replace(/\bsignes\s+cliniques\s+compatibles\s+avec\b/gi, 'symptômes')
+        .replace(/\bcompatible\s+avec\b/gi, '')
+        .replace(/\bpathologie\b/gi, 'problème')
+        .replace(/\bdiagnostic\b/gi, 'ce que j\'ai')
+        .replace(/\bde\s+(cardiologie|pneumologie|pediatrie|pédiatrie|gynecologie|gynécologie|neurologie|dermatologie|urologie|gastro\s*ent[eé]rologie|nephrologie|néphrologie|endocrinologie|oncologie|hematologie|hématologie|infectiologie)\b/gi, '')
+        .replace(/\s{2,}/g, ' ')
+        .trim();
+
+    // Ensure first-person tone if the text became fragment-like.
+    if (!/\b(je|j')\b/i.test(text) && /^[a-zàâçéèêëîïôûùüÿñæœ]/i.test(text)) {
+        text = `je ${text}`;
+    }
+
+    // Clean punctuation.
+    text = text
+        .replace(/\s+([,.;!?])/g, '$1')
+        .replace(/\.{3,}/g, '...')
+        .trim();
+
+    return text;
+}
+
+function looksLikeNonPatientReply(reply) {
+    const text = String(reply || '').toLowerCase();
+    if (!text.trim()) return true;
+
+    // Strong signals of a clinician-style answer.
+    if (/(\ble patient\b|\bpatiente\b|\bsignes cliniques\b|\bcompatible avec\b|\bpathologie\b|\bdiagnostic\b)/i.test(text)) {
+        return true;
+    }
+    // Specialty leakage (should not happen in patient speech).
+    if (/(cardiolog|pneumolog|p[eé]diatr|gyn[eé]colog|neurolog|dermatolog|urolog|gastro\s*ent[eé]rolog|n[eé]phrolog|endocrinolog|oncolog|h[eé]matolog|infectiolog)/i.test(text)) {
+        return true;
+    }
+    // Suggesting tests or medical advice.
+    if (/(il faudrait|vous devriez|je vous conseille|je recommande|on doit|bilan|\becg\b|\bscanner\b|\birm\b|prise de sang|analyse[s]?|radiographie)/i.test(text)) {
+        return true;
+    }
+    // Must be first-person.
+    if (!/(\bje\b|\bj'\b|\bmoi\b|\bmon\b|\bma\b|\bmes\b)/i.test(text)) {
+        return true;
+    }
+    return false;
 }
 
 const MALE_FIRST_NAMES = ['Amadou', 'Moussa', 'Ibrahima', 'Mamadou', 'Issa', 'Yao', 'Koffi', 'Karim', 'Paul', 'Jean'];
@@ -289,8 +327,47 @@ function inferDefaultsFromHint(hint) {
     return { age: 34, gender: 'Masculin' };
 }
 
-function sanitizeGeneratedCase(payload) {
+function sanitizeGeneratedCase(payload, options = {}) {
     if (!payload || typeof payload !== 'object') return payload;
+
+    const normalizeTreatmentEntry = (entry) => {
+        if (!entry) return null;
+        if (typeof entry === 'string') {
+            const med = entry.trim();
+            if (!med) return null;
+            return { medication: med, dosage: '', frequency: '', duration: '' };
+        }
+        if (typeof entry !== 'object') return null;
+
+        const medication = String(
+            entry.medication ||
+            entry.medicament ||
+            entry.drug ||
+            entry.name ||
+            entry.dci ||
+            entry.DCI ||
+            '',
+        ).trim();
+
+        const dosage = String(entry.dosage || entry.dose || entry.posologie || entry.dose_mg || '').trim();
+        const frequency = String(entry.frequency || entry.frequence || entry.voie || entry.route || '').trim();
+        const duration = String(entry.duration || entry.duree || '').trim();
+
+        if (!medication && !dosage && !frequency && !duration) return null;
+        return { medication, dosage, frequency, duration };
+    };
+
+    const normalizedTreatment = Array.isArray(payload.treatment)
+        ? payload.treatment.map(normalizeTreatmentEntry).filter(Boolean)
+        : [];
+
+    const normalizedTreatmentNotes = String(
+        payload.treatment_notes ||
+        payload.treatment_note ||
+        payload.treatmentNotes ||
+        payload.notes ||
+        '',
+    ).trim();
 
     const hinted = inferDefaultsFromHint(payload.avatar_hint);
     const rawGender = normalizeGeneratedGender(payload.gender) || hinted.gender;
@@ -301,7 +378,8 @@ function sanitizeGeneratedCase(payload) {
         gender: rawGender,
     });
 
-    const seed = `${payload.diagnosis || ''}|${payload.consultation_reason || ''}|${rawAge}|${rawGender}`;
+    const extraSeed = String(options.generationSeed || '').trim();
+    const seed = `${payload.diagnosis || ''}|${payload.consultation_reason || ''}|${rawAge}|${rawGender}|${extraSeed}`;
     const patientName = buildConsistentName(payload.patient_name, rawGender, seed);
 
     const exams = Array.isArray(payload.exams)
@@ -321,11 +399,13 @@ function sanitizeGeneratedCase(payload) {
         avatar_hint: profile?.hint || payload.avatar_hint || 'male_young',
         avatar: profile?.path || payload.avatar || null,
         exams,
+        treatment: normalizedTreatment,
+        treatment_notes: normalizedTreatmentNotes,
     };
 }
 
 // ═══════════════════════════════════════════════════════════
-//  Main response generator — tries Groq → Ollama → Fallback
+//  Main response generator — Groq ↔ Local Llama (LM Studio)
 // ═══════════════════════════════════════════════════════════
 
 const generatePatientResponse = async (caseData, question) => {
@@ -333,75 +413,98 @@ const generatePatientResponse = async (caseData, question) => {
     const patientName = caseData.patient_name || 'un patient';
     const age = caseData.medical_history?.age || '';
     const gender = caseData.medical_history?.gender || '';
-    const symptoms = caseData.initial_symptoms || caseData.consultation_reason || '';
+    const rawSymptoms = caseData.initial_symptoms || caseData.consultation_reason || '';
+    const symptoms = normalizePatientKnownText(rawSymptoms);
     const history = caseData.medical_history || {};
-    const basePrompt = caseData.prompt_patient || '';
-    const diagnosis = caseData.expected_diagnosis || '';
+    const basePrompt = String(caseData.prompt_patient || '').trim();
+
+    const consultationReason = normalizePatientKnownText(caseData.consultation_reason || '') || symptoms;
+
+    const antecedentsPerso = JSON.stringify(history.antecedents?.perso || history.antecedents || []);
+    const antecedentsFamiliaux = JSON.stringify(history.antecedents?.familiaux || {});
+    const habitudes = JSON.stringify(history.habits || []);
+    const allergies = JSON.stringify(history.allergies || []);
 
     const systemPrompt = `Tu es ${patientName}, ${age ? `${age} ans` : 'un adulte'}, ${gender || 'patient'}.
-Tu joues le rôle d'un patient dans une simulation médicale pour des étudiants en médecine.
+Tu joues le rôle d'un vrai patient dans une simulation médicale pour étudiants en médecine. Tu parles naturellement, avec tes propres mots.
 
-CONTEXTE MÉDICAL (informations que tu connais en tant que patient) :
-- Motif de consultation : ${caseData.consultation_reason || symptoms}
-- Tes symptômes : ${symptoms}
-- Tes antécédents personnels : ${JSON.stringify(history.antecedents?.perso || history.antecedents || 'Aucun particulier')}
-- Antécédents familiaux : ${JSON.stringify(history.antecedents?.familiaux || 'Aucun particulier')}
-- Habitudes de vie : ${JSON.stringify(history.habits || 'Non spécifié')}
-- Allergies : ${JSON.stringify(history.allergies || 'Aucune connue')}
-${basePrompt ? `\nInstructions spéciales : ${basePrompt}` : ''}
+VIE ET SANTÉ (ce que TU ressens et sais en tant que patient) :
+- Pourquoi tu es là : ${consultationReason}
+- Ce que tu ressens : ${symptoms}
+- Tes antécédents personnels (maladies, opérations passées) : ${antecedentsPerso}
+- Antécédents familiaux : ${antecedentsFamiliaux}
+- Tes habitudes (tabac, alcool, sport…) : ${habitudes}
+- Allergies : ${allergies}
+${basePrompt ? `\nTon style de personnalité et comportement : ${basePrompt}` : ''}
 
-RÈGLES IMPORTANTES :
-1. Réponds UNIQUEMENT en tant que patient. Tu ne donnes JAMAIS de diagnostic médical.
-2. Tu ne connais PAS le diagnostic (${diagnosis}). Tu ne le révèles JAMAIS.
-3. Réponds de façon naturelle, comme un vrai patient qui parle à son médecin.
-4. Utilise un langage simple et naturel (pas de jargon médical).
-5. Si le médecin te pose une question sur un symptôme que tu n'as pas, dis clairement que non.
-6. Si le médecin te demande quelque chose que tu ne sais pas, dis que tu ne sais pas.
-7. Tes réponses doivent être courtes (2-3 phrases maximum).
-8. Réponds en français.
-9. Sois cohérent avec tes symptômes et ton histoire médicale décrite ci-dessus.
-10. Tu peux exprimer de l'inquiétude, de la douleur ou de l'incertitude comme un vrai patient.`;
+COMMENT TU DOIS RÉPONDRE :
+1. TOUJOURS à la 1ère personne (je, moi, mon, ma). Jamais "le patient".
+2. Révèle tes symptômes PROGRESSIVEMENT — seulement si le médecin pose la bonne question. Ne donne pas tout d'un coup.
+3. Si on te demande un symptôme que tu n'as pas : "Non, pas du tout" ou "Non, ça non."
+4. Si on te demande ton diagnostic ou ce que tu as : "Je ne sais pas, c'est pour ça que je viens vous voir."
+5. Interdits absolus : termes médicaux, noms de spécialité, "signes cliniques", "pathologie", "compatible avec".
+6. Réponses courtes et naturelles : 1 à 2 phrases maximum (30 mots max).
+7. Exprime parfois ton inquiétude, ta douleur, ton hésitation — comme un vrai patient.
+8. Réponds toujours en français, langage courant.
+9. Ne propose jamais d'examens ni de traitements. Tu es là pour décrire, pas pour soigner.`;
 
     const userMessage = question || "Bonjour Docteur.";
 
-    // 1) Try Groq (free cloud LLM — intelligent responses)
-    const groqReply = await callGroq(systemPrompt, userMessage);
-    if (groqReply) return groqReply;
+    const primary = getPrimaryLlmProvider();
 
-    // 2) Try Ollama (local LLM)
-    const ollamaPrompt = [
-        systemPrompt,
-        `\nQuestion du médecin: ${userMessage}`,
-        '\nRéponse du patient:'
-    ].join('\n');
-    const ollamaReply = await callOllama(ollamaPrompt);
-    if (ollamaReply) return ollamaReply;
+    const tryProviderPatient = async (providerName, promptSystem) => {
+        const callFn = providerName === 'groq' ? callGroq : callLlamaLocal;
+        const reply = await callFn(promptSystem, userMessage, {
+            temperature: 0.7,
+            max_tokens: 300,
+            timeoutMs: 25000,
+        });
+        if (reply && !looksLikeNonPatientReply(reply)) return reply;
+        if (reply) {
+            const retry = await callFn(
+                `${promptSystem}\n\nIMPORTANT: Ta dernière réponse n'était pas un patient. Reformule STRICTEMENT à la 1ère personne, langage simple, sans diagnostic, sans "le patient" ni spécialité.`,
+                userMessage,
+                { temperature: 0.4, max_tokens: 120, timeoutMs: 25000 },
+            );
+            if (retry && !looksLikeNonPatientReply(retry)) return retry;
+        }
+        return null;
+    };
 
-    // 3) Fallback (keyword-based)
-    console.warn('⚠ Using keyword fallback (no LLM available)');
-    const fallbackPrompt = [
-        `Symptômes initiaux: ${symptoms}`,
-        `Historique médical: ${JSON.stringify(history)}`,
-        `Question du médecin: ${userMessage}`,
-    ].join('\n');
-    return smartFallback(fallbackPrompt);
+    const first = primary;
+    const second = getOtherProvider(primary);
+
+    const firstReply = await tryProviderPatient(first, systemPrompt);
+    if (firstReply) return firstReply;
+    if (isProviderRequired(first)) throw new Error(`${first} required but unavailable`);
+
+    const secondReply = await tryProviderPatient(second, systemPrompt);
+    if (secondReply) return secondReply;
+    if (isProviderRequired(second)) throw new Error(`${second} required but unavailable`);
+
+    throw new Error('LLM required but unavailable');
 };
 
-// Legacy function for tutor (still uses prompt-based approach)
-const generateResponse = async (prompt) => {
-    // Try Groq first
-    const groqReply = await callGroq(
-        'Tu es un tuteur pédagogique médical. Analyse le raisonnement clinique de l\'étudiant et fournis un feedback structuré en français.',
-        prompt
-    );
-    if (groqReply) return groqReply;
+// General-purpose text generation (tuteur, indices, etc.)
+// Accepts an optional custom systemPrompt; falls back to a structured default.
+const generateResponse = async (prompt, customSystemPrompt) => {
+    const systemPrompt = customSystemPrompt || `Tu es un tuteur pédagogique médical expert. Tu analyses le raisonnement clinique d'un étudiant en médecine et tu fournis un feedback structuré, bienveillant et rigoureux en français. Tes retours sont détaillés, précis, et toujours liés aux actions concrètes de l'étudiant.`;
+    const primary = getPrimaryLlmProvider();
 
-    // Try Ollama
-    const ollamaReply = await callOllama(prompt);
-    if (ollamaReply) return ollamaReply;
+    const firstName = primary;
+    const secondName = getOtherProvider(primary);
+    const firstCall = getProviderCall(firstName);
+    const secondCall = getProviderCall(secondName);
 
-    // Fallback
-    return "Feedback indisponible pour le moment. Veuillez réessayer plus tard.";
+    const first = await firstCall(systemPrompt, prompt, { temperature: 0.65, maxOutputTokens: 900, timeoutMs: 40000 });
+    if (first) return first;
+    if (isProviderRequired(firstName)) throw new Error(`${firstName} required but unavailable`);
+
+    const second = await secondCall(systemPrompt, prompt, { temperature: 0.65, maxOutputTokens: 900, timeoutMs: 40000 });
+    if (second) return second;
+    if (isProviderRequired(secondName)) throw new Error(`${secondName} required but unavailable`);
+
+    throw new Error('LLM required but unavailable');
 };
 
 // ═══════════════════════════════════════════════════════════
@@ -414,36 +517,63 @@ const generateCase = async (specialtyName, difficulty, options = {}) => {
     const forcedDiagnosisInput = String(options.forcedDiagnosis || '').trim();
     const diffLabel = ['très facile', 'facile', 'intermédiaire', 'difficile', 'très difficile'][Math.min(difficulty - 1, 4)];
 
+    // 5 saisons par spécialité (s1=très facile → s5=expert), 12+ maladies par saison pour couvrir 10 épisodes sans répétition
     const specialtyDiseaseMatrix = {
         cardiologie: {
-            easy: ['Hypertension artérielle essentielle', 'Insuffisance cardiaque gauche décompensée'],
-            medium: ['Syndrome coronarien aigu sans sus-décalage ST', 'Fibrillation auriculaire rapide'],
-            hard: ['Tamponnade péricardique', 'Dissection aortique de type B'],
+            s1: ['Hypertension artérielle essentielle', 'Insuffisance cardiaque gauche décompensée compensée', 'Fibrillation auriculaire de découverte fortuite', 'Péricardite aiguë virale', 'Cardiopathie hypertensive stable', "Angor stable d'effort", 'Bradycardie sinusale symptomatique', 'Valvulopathie mitrale modérée', 'Bloc de branche droit isolé', 'Flutter auriculaire typique', 'Extrasystoles ventriculaires bénignes', 'Syndrome de Raynaud cardiaque'],
+            s2: ['Syndrome coronarien aigu sans sus-décalage ST', 'Insuffisance cardiaque biventriculaire', 'Fibrillation auriculaire rapide avec pré-excitation', 'Trouble conductif auriculo-ventriculaire du 2e degré', 'Valvulopathie aortique significative', 'Cardiomyopathie dilatée débutante', 'Tachycardie ventriculaire non soutenue', 'Angor instable de novo', 'Insuffisance mitrale aiguë', 'Hypertension artérielle résistante', 'Thrombose veineuse profonde proximale', 'Embolie pulmonaire intermédiaire à risque'],
+            s3: ['Syndrome coronarien aigu avec sus-décalage ST', 'Cardiomyopathie hypertrophique obstructive', 'Rétrécissement aortique serré symptomatique', 'Tachycardie ventriculaire soutenue', 'Endocardite infectieuse subaiguë', 'Myocardite aiguë virale', 'Syndrome de Wolff-Parkinson-White symptomatique', 'Dissection coronaire spontanée', 'Bloc sino-auriculaire avancé', 'Insuffisance tricuspidienne sévère', 'Cardiomyopathie du péripartum', 'Thrombus intraventriculaire gauche'],
+            s4: ['Tamponnade péricardique', 'Dissection aortique de type A', 'Choc cardiogénique post-infarctus', 'Endocardite infectieuse compliquée', 'Syndrome de Brugada avec syncope', 'QT long congénital avec torsades de pointe', 'Rupture de pilier mitral post-ischémique', 'Infarctus du ventricule droit', 'Régurgitation aortique aiguë', 'Hypertension pulmonaire sévère', 'Embolie pulmonaire massive avec état de choc', 'Insuffisance cardiaque réfractaire au traitement'],
+            s5: ['Dissection aortique de type B compliquée', 'Choc cardiogénique réfractaire aux amines', 'Tachycardie ventriculaire en tempête électrique', 'Myocardite à cellules géantes', 'Cardiomyopathie de Tako-Tsubo avec complications', 'Syndrome coronarien aigu atypique chez le diabétique', 'Atteinte cardiaque sarcoïdosique', 'Vascularite coronaire sur lupus', 'Syndrome de Dressler post-IDM', 'Hypertension artérielle maligne avec atteinte rénale', 'Compression cardiaque extrinsèque tumorale', 'Endocardite marantique paranéoplasique'],
         },
         pneumologie: {
-            easy: ['Asthme aigu simple', 'Pneumonie communautaire lobaire'],
-            medium: ['Embolie pulmonaire intermédiaire', 'Exacerbation aiguë de BPCO'],
-            hard: ['Pneumothorax compressif', 'SDRA débutant'],
+            s1: ['Asthme aigu simple', 'Pneumonie communautaire lobaire', 'Bronchite aiguë infectieuse', 'Pleurésie réactionnelle', 'Exacerbation légère de BPCO', 'Rhinosinusite aiguë compliquée', 'Trachéobronchite bactérienne', 'Laryngite aiguë sous-glottique', 'Pneumonie atypique à mycoplasme', "Coqueluche de l'adulte", 'Épanchement pleural transudatif', 'Pneumothorax spontané primaire minime'],
+            s2: ['Asthme sévère réfractaire aux bronchodilatateurs', 'Pneumonie bilatérale sévère', 'Exacerbation aiguë de BPCO modérée', 'Pleurésie purulente empyème', 'Tuberculose pulmonaire active', "Pneumopathie d'inhalation", 'Épanchement pleural malin', 'Sarcoïdose pulmonaire stade II', 'BPCO gold III avec polyglobulie débutante', 'Pneumonie à pneumocoque bactériémique', 'Silicose avec complications', 'Pneumothorax spontané primaire compressif'],
+            s3: ['Embolie pulmonaire intermédiaire', 'BPCO avec polyglobulie secondaire sévère', 'Pneumocystose pulmonaire', 'Aspergillose pulmonaire invasive', "Bronchiectasies compliquées d'hémoptysie", 'Hypertension pulmonaire idiopathique', 'Pneumonie communautaire sévère score PSI élevé', 'Fibrose pulmonaire idiopathique en exacerbation', 'Pneumopathie interstitielle non spécifique', 'Cancer bronchique avec atélectasie', 'Pleurésie tuberculeuse', 'Séquelles pulmonaires post-COVID sévères'],
+            s4: ['Pneumothorax compressif', 'SDRA débutant', 'Embolie pulmonaire massive avec état de choc', 'Abcès pulmonaire compliqué', 'Hémoptysie massive', 'Vascularite pulmonaire granulomatose de Wegener', "Pneumopathie d'hypersensibilité aiguë", 'Détresse respiratoire aiguë hypoxémiante', 'Lymphangite carcinomateuse', 'Fistule broncho-pleurale', 'Médiastinite infectieuse descendante', 'Chylothorax traumatique'],
+            s5: ['SDRA sévère avec défaillance multiviscérale', 'Aspergillose trachéobronchique invasive', 'Hémorragie alvéolaire diffuse sur vascularite ANCA+', 'Compression trachéale tumorale avec stridor', 'Pneumonie nécrosante à Panton-Valentine leucocidine', 'Hypertension pulmonaire sévère en crise', 'Asthme quasi-fatal sous ventilation', 'Bronchiolite oblitérante post-transplantation', 'Embolie pulmonaire récidivante sous anticoagulation', 'Pleuropneumopathie paranéoplasique', 'SDRA sur noyade secondaire', 'Pneumopathie médicamenteuse sévère'],
         },
         pediatrie: {
-            easy: ['Otite moyenne aiguë', 'Gastro-entérite aiguë simple'],
-            medium: ['Bronchiolite modérée', 'Pyélonéphrite aiguë de l\'enfant'],
-            hard: ['Méningite bactérienne pédiatrique', 'Sepsis néonatal tardif'],
+            s1: ['Otite moyenne aiguë', 'Gastro-entérite aiguë simple', 'Rhinopharyngite fébrile', 'Angine bactérienne à streptocoque', 'Varicelle non compliquée', 'Exanthème subit roséole', 'Impétigo bulleux localisé', 'Conjonctivite purulente', 'Parasitose intestinale giardia', 'Stomatite herpétique', 'Dermatite atopique en poussée', 'Scarlatine classique'],
+            s2: ['Bronchiolite modérée du nourrisson', "Pyélonéphrite aiguë de l'enfant", 'Pneumonie franche lobaire pédiatrique', 'Convulsion fébrile simple', 'Purpura rhumatoïde Schönlein-Henoch', 'Syndrome néphrotique à lésions glomérulaires minimes', 'Anémie ferriprive sévère', 'Diabète de type 1 inaugural', 'Appendicite aiguë non compliquée', 'Croup laryngite striduleuse', 'Hypertension intracrânienne bénigne', 'Intoxication médicamenteuse accidentelle'],
+            s3: ['Méningite virale enfant', 'Bronchiolite sévère hypoxémiante', 'Invagination intestinale aiguë', 'Leucémie aiguë révélée par pancytopénie', 'Syndrome hémolytique et urémique', 'Kawasaki incomplet', 'Myocardite virale pédiatrique', 'Épilepsie nouvelle avec état de mal partiel', 'Arthrite septique chez le nourrisson', 'Adénophlegmon cervical', 'Hernie inguinale étranglée', 'Pneumopathie à mycobactérie'],
+            s4: ['Méningite bactérienne pédiatrique', 'Épiglottite aiguë obstructive', 'Choc septique sur infection néonatale', 'Myocardite fulminante pédiatrique', 'Acidocétose diabétique inaugurale', 'Intussusception compliquée de nécrose', 'Encéphalite auto-immune pédiatrique', 'Syndrome de Reye', 'Purpura fulminans méningococcique', "Torsion de testicule chez l'adolescent", 'Insuffisance rénale aiguë sur SHU', 'Maltraitance avec traumatisme crânien non accidentel'],
+            s5: ['Sepsis néonatal tardif', 'Méningite tuberculeuse pédiatrique', 'Syndrome de détresse respiratoire néonatal', 'Encéphalopathie hypoxo-ischémique néonatale', 'Cardiopathie congénitale cyanogène révélée en néonatal', 'Entérocolite ulcéro-nécrosante néonatale', 'Choc septique réfractaire chez le prématuré', 'Leucémie aiguë en choc hyperleukocytaire', 'Malformation artérioveineuse cérébrale rompue', 'Myocardite nécrosante à entérovirus', 'Intoxication grave aux organophosphorés', 'Aplasie médullaire sur anémie de Fanconi'],
         },
         gynecologie: {
-            easy: ['Vaginose bactérienne', 'Dysménorrhée primaire'],
-            medium: ['Maladie inflammatoire pelvienne', 'Grossesse extra-utérine non rompue'],
-            hard: ['Pré-éclampsie sévère', 'Hémorragie du post-partum'],
+            s1: ['Vaginose bactérienne', 'Dysménorrhée primaire', 'Candidose vulvo-vaginale', 'Métrorragies fonctionnelles de la puberté', 'Mastodynie cyclique', 'Bartholinite aiguë', 'Kyste ovarien fonctionnel', 'Endométriose légère avec algies', 'Vulvite irritative', 'Syndrome prémenstruel sévère', 'Infection génitale à chlamydia', 'Leucorrhées inflammatoires récidivantes'],
+            s2: ['Maladie inflammatoire pelvienne', 'Grossesse extra-utérine non rompue', 'Fibromyome utérin symptomatique', "Menace d'accouchement prématuré", 'Hyperemesis gravidarum', 'Rupture prématurée des membranes', 'Kyste ovarien compliqué de torsion partielle', 'Endométriose profonde infiltrante', 'Prolapsus génital symptomatique', 'Grossesse intra-utérine avec saignement du premier trimestre', 'Salpingite sub-aiguë', 'Diabète gestationnel mal équilibré'],
+            s3: ['Grossesse extra-utérine rompue', 'Hématome rétroplacentaire partiel', 'Placenta praevia avec métrorragies', "Torsion d'annexe", 'Pyosalpinx compliqué', 'Fausse couche hémorragique', 'Cancer du col utérin révélé par hémorragie', 'Aménorrhée secondaire sur insuffisance ovarienne prématurée', 'Pré-éclampsie modérée', 'Ovaire polykystique avec hyperandrogénie sévère', 'Prolapsus avec incarcération', 'Endométrite post-partum'],
+            s4: ['Pré-éclampsie sévère', 'Hémorragie du post-partum', "Torsion d'annexe avec nécrose", 'Rupture utérine sur cicatrice', 'Sepsis puerpéral', 'Hématome rétroplacentaire massif', 'CIVD obstétricale', "Cancer de l'ovaire révélé en urgence", 'Kyste dermoïde rompu avec choc chimique', 'Occlusion intestinale sur carcinose péritonéale gynécologique', 'Thrombophlébite septique pelvienne', 'Embolie amniotique'],
+            s5: ['Éclampsie avec état de mal épileptique', 'Hémorragie du post-partum réfractaire', 'Choc septique sur endométrite nécrosante', 'SDRA sur embolie amniotique', 'Cancer du col utérin stade IV révélé en urgence', 'Rupture utérine avec mort foetale', 'HELLP syndrome sévère', 'Pancréatite aiguë gestationnelle sévère', 'Tératome ovarien malin en choc', 'Nécrose utérine post-embolisation', 'Choc anaphylactique au latex peropératoire', 'Défaillance multiviscérale sur sepsis obstétrical'],
         },
         neurologie: {
-            easy: ['Migraine sans aura', 'Vertige positionnel paroxystique bénin'],
-            medium: ['AVC ischémique sylvien', 'Syndrome méningé viral'],
-            hard: ['Hémorragie sous-arachnoïdienne', 'Encéphalite herpétique'],
+            s1: ['Migraine sans aura', 'Vertige positionnel paroxystique bénin', 'Névralgie faciale essentielle', 'Céphalée de tension chronique', 'Syndrome des jambes sans repos', 'Neuropathie périphérique diabétique débutante', 'Sciatique commune L5-S1', 'Paralysie faciale périphérique de Bell', 'Syncope vagale récidivante', 'Névrite vestibulaire', 'Accident ischémique transitoire isolé', 'Épilepsie bien contrôlée par traitement'],
+            s2: ['AVC ischémique sylvien', 'Syndrome méningé viral', 'Épilepsie partielle avec état de mal convulsif', 'Sclérose en plaques première poussée', 'Polyneuropathie inflammatoire démyélinisante', 'Canal carpien sévère', 'Myasthénie gravis débutante', 'Méningoencéphalite virale', 'Hypertension intracrânienne idiopathique', 'Neuropathie optique rétrobulbaire', 'Syndrome de Claude Bernard-Horner', 'AIT carotidien avec sténose serrée'],
+            s3: ['AVC ischémique tronculaire', 'Méningite bactérienne adulte', 'Hémorragie intracérébrale hypertensive', 'Syndrome de Guillain-Barré', 'Myasthénie en crise cholinergique', 'Tumeur cérébrale révélée par comitialité', 'Thrombose veineuse cérébrale', 'Encéphalite limbique auto-immune', 'Maladie de Parkinson avec complications', 'Hématome sous-dural chronique', 'Sclérose latérale amyotrophique évoluée', 'Neuropathie optique ischémique antérieure'],
+            s4: ["Hémorragie sous-arachnoïdienne par rupture d'anévrisme", 'Encéphalite herpétique', 'État de mal épileptique réfractaire', 'Syndrome de locked-in sur AVC pontique', 'Rupture de malformation artérioveineuse cérébrale', 'Syndrome de Wernicke sur carence en thiamine', 'Méningite à Listeria', 'Méningite tuberculeuse', 'Syndrome malin des neuroleptiques', 'Thrombose du sinus caverneux', 'Hématome extradural traumatique', 'Poliomyélite spinale progressive'],
+            s5: ['Hémorragie sous-arachnoïdienne avec vasospasme cérébral', 'Encéphalite auto-immune réfractaire', 'État de mal épileptique super-réfractaire', 'Encéphalomyélite aiguë disséminée', 'Anoxie cérébrale post-arrêt cardiaque', 'Myopathie inflammatoire avec atteinte cardiaque', 'Méningite fongique chez immunodéprimé', 'Maladie de Creutzfeldt-Jakob sporadique', 'Vasospasme cérébral post-hémorragique étendu', 'Leucoencéphalopathie multifocale progressive', 'Démence à corps de Lewy avec complications sévères', 'Syndrome de déafférentation complète'],
         },
         nephrologie: {
-            easy: ['Colique néphrétique simple', 'Infection urinaire basse'],
-            medium: ['Pyélonéphrite aiguë', 'Insuffisance rénale aiguë fonctionnelle'],
-            hard: ['Syndrome néphrotique impur', 'Hyperkaliémie menaçante sur insuffisance rénale'],
+            s1: ['Colique néphrétique simple', 'Infection urinaire basse non compliquée', 'Hématurie microscopique isolée', 'Protéinurie légère de découverte fortuite', 'Insuffisance rénale chronique stade 2', 'Lithiase rénale asymptomatique', 'Pyélonéphrite aiguë simple', "Rétention d'urine aiguë sur hypertrophie bénigne", 'Hyponatrémie légère par potomanie', 'Acidose tubulaire rénale type 1', 'Kyste rénal simple', 'Pollakiurie fonctionnelle chronique'],
+            s2: ['Pyélonéphrite aiguë compliquée', 'Insuffisance rénale aiguë fonctionnelle', 'Syndrome néphrotique pur à lésions glomérulaires minimes', "Colique néphrétique compliquée d'obstacle", 'Hyperkaliémie modérée sur insuffisance rénale chronique', 'Néphropathie diabétique stade III', 'Hypertension rénovasculaire', 'Glomérulonéphrite aiguë post-infectieuse', 'Polykystose rénale avec complications', 'Nécrose papillaire rénale', 'Rhabdomyolyse traumatique avec insuffisance rénale débutante', 'Acidose métabolique sur insuffisance rénale'],
+            s3: ['Syndrome néphrotique impur', 'Insuffisance rénale aiguë organique', 'Glomérulonéphrite rapidement progressive', 'Néphropathie lupique active', 'Crise rénale sclérodermique', 'Amylose rénale révélée', 'Pyélonéphrite emphysémateuse', 'Nécrose corticale bilatérale', 'Obstruction bilatérale des voies urinaires', 'Syndrome de Goodpasture', 'Microangiopathie thrombotique rénale', 'Granulomatose avec polyangéite rénale'],
+            s4: ['Hyperkaliémie menaçante sur insuffisance rénale', 'Syndrome hémolytique et urémique atypique', 'Néphropathie interstitielle aiguë médicamenteuse sévère', 'Insuffisance rénale aiguë anurique', 'Sepsis avec atteinte rénale aiguë sévère', 'Crise aiguë de rejet de transplantation rénale', "Thrombose de l'artère rénale", 'Embolie rénale sur fibrillation auriculaire', 'Rhabdomyolyse sévère avec anurie', 'Endocardite avec néphrite focale', 'Hypertension artérielle maligne avec néphropathie', 'Purpura thrombopénique thrombotique'],
+            s5: ['Insuffisance rénale terminale avec hypervolémie réfractaire', 'SHU atypique sur mutation du facteur H', 'Vascularite ANCA+ avec hémorragie alvéolaire et néphrite', 'Rejet hyperaigu de greffe rénale', 'Amylose AA diffuse avec insuffisance rénale terminale', 'Hypercalcémie maligne avec insuffisance rénale', 'Syndrome de lyse tumorale avec anurie', "Glomérulonéphrite de l'hépatite C avec cryoglobulinémie", 'Atteinte rénale de la maladie de Fabry', 'Intoxication aiguë aux métaux lourds avec nécrose tubulaire', 'Néphrite interstitielle granulomateuse sur sarcoïdose', 'Néphropathie fibrilleuse'],
+        },
+        gastroenterologie: {
+            s1: ['Gastrite aiguë simple', 'Reflux gastro-oesophagien symptomatique', 'Colique hépatique simple', "Syndrome de l'intestin irritable", 'Constipation chronique fonctionnelle', 'Hémorroïdes internes compliquées', 'Gastro-entérite virale', 'Hernie hiatale symptomatique', 'Dyspepsie fonctionnelle', "Rectorragies d'origine anale", 'Stéatose hépatique non alcoolique', 'Diarrhée post-antibiothérapie'],
+            s2: ['Ulcère gastroduodénal hémorragique', 'Cholécystite aiguë lithiasique', 'Hépatite virale aiguë B', 'Maladie de Crohn iléale débutante', 'Rectorragie sur polype colique', 'Pancréatite aiguë biliaire légère', 'Colite infectieuse à Clostridium difficile', 'Ischémie colique modérée', 'Ascite sur cirrhose compensée', 'Hépatite alcoolique aiguë', "Achalasie de l'oesophage", 'Angiodysplasie colique'],
+            s3: ["Péritonite par perforation d'ulcère", 'Pancréatite aiguë nécrotique', 'Hémorragie digestive haute massive', 'Colite aiguë grave de Crohn', 'Rupture de varices oesophagiennes', 'Occlusion intestinale aiguë par bride', 'Cholangite aiguë lithiasique', 'Abcès hépatique amibien', 'Thrombose portale aiguë', 'Appendicite aiguë perforée avec péritonite', 'Carcinome hépatocellulaire sur cirrhose', 'Hémorragie digestive basse massive'],
+            s4: ['Hépatite fulminante', 'Colite ischémique étendue', 'Syndrome de Budd-Chiari aigu', 'Perforation colique sur diverticulite', 'Volvulus du côlon sigmoïde', 'Pancréatite nécrotique infectée', 'Infarctus mésentérique', 'Encéphalopathie hépatique fulminante', 'Hémorragie sous-capsulaire hépatique', 'Carcinose péritonéale avec occlusion', 'Hémorragie de Mallory-Weiss avec état de choc', 'Fistule entéro-cutanée compliquée'],
+            s5: ['Hépatite fulminante avec coma hépatique', 'Infarctus mésentérique étendu avec nécrose', 'SDRA sur pancréatite aiguë sévère', 'Hémorragie digestive massive incontrôlable', "Occlusion de l'intestin grêle avec étranglement", 'Péritonite généralisée post-opératoire', 'CIVD sur hépato-insuffisance', 'Lymphome digestif révélé par perforation', 'Ischémie-reperfusion intestinale étendue', 'Ascite réfractaire avec syndrome hépato-rénal', 'Rupture spontanée de rate sur hémopathie', 'Choc septique sur cholangite biliaire ascendante'],
+        },
+        endocrinologie: {
+            s1: ['Diabète de type 2 découvert', 'Hypothyroïdie fruste', 'Surpoids avec syndrome métabolique', 'Goitre simple euthyroïdien', 'Ostéoporose post-ménopausique débutante', 'Hypovitaminose D avec myalgies', 'Hyperglycémie de stress transitoire', 'Hypercholestérolémie familiale hétérozygote', 'Syndrome des ovaires polykystiques', 'Hypertriglycéridémie sévère', 'Hyperthyroïdie infraclinique', 'Hypoglycémie réactionnelle fonctionnelle'],
+            s2: ['Hyperthyroïdie sur maladie de Basedow', 'Diabète de type 1 inaugural sans acidocétose', 'Adénome hypophysaire à prolactine', 'Insuffisance surrénalienne chronique compensée', 'Hyperparathyroïdie primaire avec lithiase', 'Syndrome de Cushing modéré', 'Phéochromocytome découvert fortuitement', 'Acromégalie débutante', 'Hyponatrémie sur SIADH modéré', 'Ostéoporose avec fracture vertébrale', 'Hypothyroïdie grave avec épanchements', 'Diabète MODY 3'],
+            s3: ['Acidocétose diabétique inaugurale', 'Crise thyrotoxique débutante', 'Insuffisance surrénalienne aiguë modérée', 'Phéochromocytome en poussée hypertensive', 'Diabète insipide central', 'Hypercalcémie maligne sur hyperparathyroïdie', 'Syndrome de Zollinger-Ellison', 'Hyperaldostéronisme primaire avec hypokaliémie sévère', 'Macroprolactinome compressif', 'Myxoedème sévère', 'Hyponatrémie profonde symptomatique sur SIADH', 'Nécrose hypophysaire syndrome de Sheehan'],
+            s4: ['Acidocétose diabétique sévère avec complications', 'Crise thyrotoxique avec défaillance cardiaque', 'Phéochromocytome en crise hypertensive maligne', 'Insuffisance surrénalienne aiguë avec choc', 'Hypocalcémie sévère post-thyroïdectomie avec tétanie', 'Hypercalcémie maligne réfractaire', 'Coma hyperosmolaire diabétique', 'Tempête thyroïdienne post-opératoire', 'Néoplasie endocrinienne multiple de type 1 révélée', 'Hypoglycémie insulinique sévère récidivante sur insulinome', 'Syndrome de Cushing avec choc septique', 'Adénome surrénalien avec défaillance métabolique'],
+            s5: ['Coma myxoédémateux', 'Crise addisonnienne avec choc réfractaire', 'SIADH avec oedème cérébral', 'Phéochromocytome malin avec métastases', 'Tempête thyroïdienne sévère avec encéphalopathie', 'Acidocétose diabétique avec défaillance multiviscérale', 'Insulinome malin avec hypoglycémie réfractaire', 'Carcinome surrénalien avec cushing ectopique', 'Hypoparathyroïdie sévère post-chirurgicale', "Diabète lipoatrophique avec résistance extrême à l'insuline", 'Coma hyperosmolaire avec rhabdomyolyse', 'Adénome corticotrope avec sepsis opportuniste'],
         },
     };
 
@@ -458,10 +588,12 @@ const generateCase = async (specialtyName, difficulty, options = {}) => {
     const matchedKey = Object.keys(specialtyDiseaseMatrix).find((k) => specialtyKey.includes(k)) || null;
     const diseasePool = matchedKey ? specialtyDiseaseMatrix[matchedKey] : null;
 
-    const diseaseTier = difficulty <= 2 ? 'easy' : (difficulty === 3 ? 'medium' : 'hard');
-    const targetDiseases = diseasePool ? diseasePool[diseaseTier] : [];
+    // Saison = Difficulté (1 étoile → s1, ..., 5 étoiles → s5)
+    const tierKeys = ['s1', 's2', 's3', 's4', 's5'];
+    const diseaseTier = tierKeys[Math.min(difficulty - 1, 4)];
+    const targetDiseases = diseasePool ? (diseasePool[diseaseTier] || []) : [];
     const alternativeDiseases = diseasePool
-        ? [...(diseasePool.easy || []), ...(diseasePool.medium || []), ...(diseasePool.hard || [])].filter((d) => !targetDiseases.includes(d))
+        ? tierKeys.flatMap((k) => k !== diseaseTier ? (diseasePool[k] || []) : []).filter((d) => !targetDiseases.includes(d))
         : [];
 
     const normalizeDiagnosis = (value) =>
@@ -553,14 +685,26 @@ RÈGLES POUR LE TRAITEMENT :
 - Inclure 1 à 4 médicaments selon la pathologie
 - Être précis sur les voies d'administration (PO, IV, IM, SC, etc.)
 
+STRUCTURE SAISON / ÉPISODE :
+- Ce cas appartient à la SAISON ${difficulty} de la spécialité ${specialtyName} (difficulté ${diffLabel})
+- Chaque saison contient 10 épisodes, chacun avec UNE pathologie distincte
+- Les 10 pathologies d'une même saison doivent couvrir des mécanismes différents (pas deux insuffisances cardiaques, pas deux pneumonies)
+- Varier systématiquement : terrain du patient (âge, sexe, comorbidités), mode de révélation, symptôme principal
+- Chaque épisode doit être reconnaissable comme un cas clinique UNIQUE et autonome
+
+RÈGLES DE DIVERSITÉ STRICTES :
+- Ne jamais reprendre le même mécanisme pathologique principal qu'un cas déjà exclu
+- Changer le profil démographique à chaque génération (vieux/jeune, homme/femme, comorbide/sain)
+- Le motif de consultation doit être formulé différemment même pour des pathologies proches
+- Privilégier des présentations cliniques variées : urgence vs chronique, typique vs atypique selon la difficulté
+
 AUTRES RÈGLES :
 - Le cas doit être médicalement réaliste et cohérent
 - Les noms de patients doivent être des noms africains ou français réalistes
-- Le diagnostic final doit varier d'une génération à l'autre au sein de la même spécialité
 - La difficulté doit influencer la facilité du diagnostic:
-  - difficulté 1-2: présentation classique, diagnostic relativement direct
-  - difficulté 3: présentation partiellement atypique
-  - difficulté 4-5: présentation plus trompeuse avec diagnostics différentiels proches
+  - difficulté 1-2 (saison 1-2): présentation classique, diagnostic relativement direct
+  - difficulté 3 (saison 3): présentation partiellement atypique
+  - difficulté 4-5 (saisons 4-5): présentation trompeuse, diagnostics différentiels proches, symptômes atypiques
 - La cohérence est obligatoire entre âge, genre, avatar_hint, symptômes, examens et traitement
 - Tu dois choisir le diagnostic final dans cette liste prioritaire si elle est fournie
 - Si un diagnostic final obligatoire est fourni, il doit être utilisé strictement comme diagnostic final
@@ -581,86 +725,47 @@ AUTRES RÈGLES :
         generationSeed ? `Graine de génération unique: ${generationSeed}` : '',
     ].filter(Boolean).join('\n');
 
-    // Try Groq with higher token limit for case generation
-    const apiKey = process.env.GROQ_API_KEY;
-    if (apiKey) {
+    const primary = getPrimaryLlmProvider();
+    const providerOrder = uniqueStrings([primary, getOtherProvider(primary)]);
+    const providerOptions = {
+        temperature: 0.8,
+        maxOutputTokens: 2500,
+        timeoutMs: 60000,
+    };
+
+    const tryParseCaseJson = (raw) => {
+        let jsonStr = String(raw || '').trim();
+        if (!jsonStr) return null;
+        if (jsonStr.startsWith('```')) {
+            jsonStr = jsonStr.replace(/^```(?:json)?\s*/, '').replace(/\s*```$/, '');
+        }
+        return sanitizeGeneratedCase(JSON.parse(jsonStr), { generationSeed });
+    };
+
+    for (const providerName of providerOrder) {
+        const callFn = getProviderCall(providerName);
+        const reply = await callFn(systemPrompt, userMessage, providerOptions);
+        if (!reply) {
+            if (isProviderRequired(providerName)) throw new Error(`${providerName} required but unavailable`);
+            continue;
+        }
+
         try {
-            const response = await axios.post(
-                'https://api.groq.com/openai/v1/chat/completions',
-                {
-                    model: process.env.GROQ_MODEL || 'llama-3.3-70b-versatile',
-                    messages: [
-                        { role: 'system', content: systemPrompt },
-                        { role: 'user', content: userMessage },
-                    ],
-                    temperature: 0.8,
-                    max_tokens: 2500,
-                },
-                {
-                    headers: {
-                        'Authorization': `Bearer ${apiKey}`,
-                        'Content-Type': 'application/json',
-                    },
-                    timeout: 30000,
-                }
-            );
-            const reply = response.data?.choices?.[0]?.message?.content;
-            if (reply) {
-                // Extract JSON from response (handle potential markdown wrapping)
-                let jsonStr = reply.trim();
-                if (jsonStr.startsWith('```')) {
-                    jsonStr = jsonStr.replace(/^```(?:json)?\s*/, '').replace(/\s*```$/, '');
-                }
-                console.log('✓ Groq case generation received');
-                const parsed = sanitizeGeneratedCase(JSON.parse(jsonStr));
-                if (forcedDiagnosis) {
-                    return {
-                        ...parsed,
-                        diagnosis: forcedDiagnosis,
-                    };
-                }
-                return parsed;
+            const parsed = tryParseCaseJson(reply);
+            if (!parsed) continue;
+            if (forcedDiagnosis) {
+                return {
+                    ...parsed,
+                    diagnosis: forcedDiagnosis,
+                };
             }
+            return parsed;
         } catch (error) {
-            console.warn('Groq case generation failed:', error.response?.data?.error?.message || error.message);
+            console.warn(`${providerName} case generation parse failed:`, error.message);
         }
     }
 
-    // Fallback: generate a basic case structure coherent with specialty and difficulty.
-    const fallbackPool = availableTargetDiseases.length > 0
-        ? availableTargetDiseases
-        : (availableAlternativeDiseases.length > 0 ? availableAlternativeDiseases : [
-        `Pathologie courante en ${specialtyName}`,
-        `Pathologie inflammatoire en ${specialtyName}`,
-        `Pathologie aiguë en ${specialtyName}`,
-    ]);
-    const fallbackDiagnosis = fallbackPool[Math.floor(Math.random() * fallbackPool.length)];
-
-    return {
-        patient_name: 'Amadou Diallo',
-        age: '45',
-        gender: 'Masculin',
-        avatar_hint: 'male_old',
-        consultation_reason: `Je consulte pour des symptômes récents qui s'aggravent progressivement.`,
-        initial_symptoms: `Le patient présente des signes cliniques compatibles avec une pathologie de ${specialtyName}.`,
-        diagnosis: fallbackDiagnosis,
-        antecedents_perso: ['Aucun antécédent particulier'],
-        antecedents_familiaux_pere: [],
-        antecedents_familiaux_mere: [],
-        allergies: ['Néant'],
-        habits: ['Non fumeur', 'Pas d\'alcool'],
-        exams: [
-            { name: 'NFS', result: 'GB 14.2 G/L (N 4-10), Hb 12.6 g/dL (N 13-17), Plaquettes 280 G/L (N 150-400)', is_relevant: true },
-            { name: 'CRP', result: 'CRP 98 mg/L (N <5)', is_relevant: true },
-            { name: 'TSH', result: 'TSH 2.1 mUI/L (N 0.4-4.0)', is_relevant: false },
-        ],
-        treatment: [
-            { medication: 'À définir', dosage: 'À définir', frequency: 'À définir', duration: 'À définir' },
-        ],
-        treatment_notes: 'À compléter',
-        prompt_patient: '',
-        prompt_tuteur: '',
-    };
+    throw new Error('LLM required but unavailable');
 };
 
 // ═══════════════════════════════════════════════════════════
@@ -728,41 +833,39 @@ Réponds UNIQUEMENT avec le JSON, rien d'autre.`;
 Important : produire un cours de compréhension médicale en lien avec ce contexte.
 Le cas clinique doit rester séparé du cours (pas de correction explicite, pas de diagnostic final donné directement).`;
 
-    const apiKey = process.env.GROQ_API_KEY;
-    if (apiKey) {
+    const primary = getPrimaryLlmProvider();
+    const providerOrder = uniqueStrings([primary, getOtherProvider(primary)]);
+    const userMessage = `Génère un cours basé sur ce cas :\n${caseSummary}`;
+
+    const tryParseCourseJson = (raw) => {
+        let jsonStr = String(raw || '').trim();
+        if (!jsonStr) return null;
+        if (jsonStr.startsWith('```')) {
+            jsonStr = jsonStr.replace(/^```(?:json)?\s*/, '').replace(/\s*```$/, '');
+        }
+        return JSON.parse(jsonStr);
+    };
+
+    for (const providerName of providerOrder) {
+        const callFn = getProviderCall(providerName);
+        const reply = await callFn(systemPrompt, userMessage, {
+            temperature: 0.7,
+            maxOutputTokens: 6500,
+            timeoutMs: 90000,
+        });
+        if (!reply) {
+            if (isProviderRequired(providerName)) throw new Error(`${providerName} required but unavailable`);
+            continue;
+        }
         try {
-            const response = await axios.post(
-                'https://api.groq.com/openai/v1/chat/completions',
-                {
-                    model: process.env.GROQ_MODEL || 'llama-3.3-70b-versatile',
-                    messages: [
-                        { role: 'system', content: systemPrompt },
-                        { role: 'user', content: `Génère un cours basé sur ce cas :\n${caseSummary}` },
-                    ],
-                    temperature: 0.7,
-                    max_tokens: 6500,
-                },
-                {
-                    headers: {
-                        'Authorization': `Bearer ${apiKey}`,
-                        'Content-Type': 'application/json',
-                    },
-                    timeout: 90000,
-                }
-            );
-            const reply = response.data?.choices?.[0]?.message?.content;
-            if (reply) {
-                let jsonStr = reply.trim();
-                if (jsonStr.startsWith('```')) {
-                    jsonStr = jsonStr.replace(/^```(?:json)?\s*/, '').replace(/\s*```$/, '');
-                }
-                console.log('✓ Groq course generation received');
-                return JSON.parse(jsonStr);
-            }
+            const parsed = tryParseCourseJson(reply);
+            if (parsed) return parsed;
         } catch (error) {
-            console.warn('Groq course generation failed:', error.response?.data?.error?.message || error.message);
+            console.warn(`${providerName} course generation parse failed:`, error.message);
         }
     }
+
+    throw new Error('LLM required but unavailable');
 
     // Fallback
     return {
@@ -845,7 +948,8 @@ ${caseData.logic_medicale || caseData.consultation_reason || 'Pathologie'}
 // ═══════════════════════════════════════════════════════════
 
 const generateQuizFromCase = async (caseData, questionCount = 30) => {
-    const safeCount = Math.min(40, Math.max(10, Number(questionCount) || 30));
+    // Product rule: always generate exactly 30 questions.
+    const safeCount = 30;
     const disease = caseData?.disease_id || caseData?.logic_medicale || caseData?.consultation_reason || 'Pathologie médicale';
     const symptomsText = String(caseData?.initial_symptoms || '').trim();
     const motifText = String(caseData?.consultation_reason || '').trim();
@@ -988,93 +1092,89 @@ Contexte patient: ${JSON.stringify(caseData?.medical_history || {})}`;
         });
     };
 
-    const apiKey = process.env.GROQ_API_KEY;
-    if (apiKey) {
-        try {
-            const response = await axios.post(
-                'https://api.groq.com/openai/v1/chat/completions',
-                {
-                    model: process.env.GROQ_MODEL || 'llama-3.3-70b-versatile',
-                    messages: [
-                        { role: 'system', content: systemPrompt },
-                        { role: 'user', content: userMessage },
-                    ],
-                    temperature: 0.5,
-                    max_tokens: 7000,
-                },
-                {
-                    headers: {
-                        Authorization: `Bearer ${apiKey}`,
-                        'Content-Type': 'application/json',
-                    },
-                    timeout: 90000,
-                },
-            );
+    const primary = getPrimaryLlmProvider();
+    const providerOrder = uniqueStrings([primary, getOtherProvider(primary)]);
 
-            const reply = response.data?.choices?.[0]?.message?.content;
-            if (reply) {
-                let jsonStr = reply.trim();
-                if (jsonStr.startsWith('```')) {
-                    jsonStr = jsonStr.replace(/^```(?:json)?\s*/, '').replace(/\s*```$/, '');
-                }
-                const parsed = JSON.parse(jsonStr);
-                if (Array.isArray(parsed?.questions)) {
-                    const unique = new Map();
-                    for (const q of parsed.questions) {
-                        if (!q || !q.question || !q.options || !q.answer) continue;
-                        const key = normalizeQuestionKey(q.question);
-                        if (!key || unique.has(key)) continue;
-                        unique.set(key, q);
-                    }
+    const parseQuizJson = (raw) => {
+        let jsonStr = String(raw || '').trim();
+        if (!jsonStr) return null;
+        if (jsonStr.startsWith('```')) {
+            jsonStr = jsonStr.replace(/^```(?:json)?\s*/, '').replace(/\s*```$/, '');
+        }
+        return JSON.parse(jsonStr);
+    };
 
-                    parsed.questions = Array.from(unique.values())
-                        .filter((q) => q && q.question && q.options && q.answer)
-                        .slice(0, safeCount)
-                        .map((q, idx) => ({
-                            id: idx + 1,
-                            question: String(q.question || '').trim(),
-                            options: {
-                                A: String(q.options?.A || '').trim(),
-                                B: String(q.options?.B || '').trim(),
-                                C: String(q.options?.C || '').trim(),
-                                D: String(q.options?.D || '').trim(),
-                            },
-                            answer: String(q.answer || 'A').trim().toUpperCase().slice(0, 1),
-                            explanation: String(q.explanation || '').trim(),
-                        }));
-                }
-
-                if (!Array.isArray(parsed?.questions) || parsed.questions.length < safeCount) {
-                    const fallback = buildFallbackQuestions();
-                    const existing = Array.isArray(parsed?.questions) ? parsed.questions : [];
-                    const existingKeys = new Set(existing.map((q) => normalizeQuestionKey(q.question)));
-                    for (const fq of fallback) {
-                        const key = normalizeQuestionKey(fq.question);
-                        if (existingKeys.has(key)) continue;
-                        existing.push(fq);
-                        if (existing.length >= safeCount) break;
-                    }
-                    parsed.questions = existing.slice(0, safeCount).map((q, idx) => ({ ...q, id: idx + 1 }));
-                }
-
-                return {
-                    title: parsed?.title || `Quiz - ${disease}`,
-                    disease: parsed?.disease || disease,
-                    questions: parsed?.questions || [],
-                };
+    const enrichAndFixQuiz = (parsed) => {
+        if (Array.isArray(parsed?.questions)) {
+            const unique = new Map();
+            for (const q of parsed.questions) {
+                if (!q || !q.question || !q.options || !q.answer) continue;
+                const key = normalizeQuestionKey(q.question);
+                if (!key || unique.has(key)) continue;
+                unique.set(key, q);
             }
+
+            parsed.questions = Array.from(unique.values())
+                .filter((q) => q && q.question && q.options && q.answer)
+                .slice(0, safeCount)
+                .map((q, idx) => ({
+                    id: idx + 1,
+                    question: String(q.question || '').trim(),
+                    options: {
+                        A: String(q.options?.A || '').trim(),
+                        B: String(q.options?.B || '').trim(),
+                        C: String(q.options?.C || '').trim(),
+                        D: String(q.options?.D || '').trim(),
+                    },
+                    answer: String(q.answer || 'A').trim().toUpperCase().slice(0, 1),
+                    explanation: String(q.explanation || '').trim(),
+                }));
+        }
+
+        if (!Array.isArray(parsed?.questions) || parsed.questions.length < safeCount) {
+            const fallback = buildFallbackQuestions();
+            const existing = Array.isArray(parsed?.questions) ? parsed.questions : [];
+            const existingKeys = new Set(existing.map((q) => normalizeQuestionKey(q.question)));
+            for (const fq of fallback) {
+                const key = normalizeQuestionKey(fq.question);
+                if (existingKeys.has(key)) continue;
+                existing.push(fq);
+                if (existing.length >= safeCount) break;
+            }
+            parsed.questions = existing.slice(0, safeCount).map((q, idx) => ({ ...q, id: idx + 1 }));
+        }
+
+        return {
+            title: parsed?.title || `Quiz - ${disease}`,
+            disease: parsed?.disease || disease,
+            questions: parsed?.questions || [],
+        };
+    };
+
+    for (const providerName of providerOrder) {
+        const callFn = getProviderCall(providerName);
+        const reply = await callFn(systemPrompt, userMessage, {
+            temperature: 0.5,
+            maxOutputTokens: 7000,
+            timeoutMs: 90000,
+        });
+        if (!reply) {
+            if (isProviderRequired(providerName)) throw new Error(`${providerName} required but unavailable`);
+            continue;
+        }
+        try {
+            const parsed = parseQuizJson(reply);
+            if (!parsed) continue;
+            console.log(`✓ ${providerName} quiz generation received`);
+            return enrichAndFixQuiz(parsed);
         } catch (error) {
-            console.warn('Groq quiz generation failed:', error.response?.data?.error?.message || error.message);
+            console.warn(`${providerName} quiz generation parse failed:`, error.message);
         }
     }
 
-    const fallbackQuestions = buildFallbackQuestions();
+    throw new Error('LLM required but unavailable');
 
-    return {
-        title: `Quiz - ${disease}`,
-        disease,
-        questions: fallbackQuestions,
-    };
+    // No fallback: only Groq/Llama are allowed.
 };
 
 module.exports = {

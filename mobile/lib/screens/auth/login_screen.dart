@@ -53,6 +53,10 @@ class _LoginScreenState extends State<LoginScreen> {
         email: user['email'] as String?,
         profileType: user['profile_type'] as String?,
       );
+      final savedLocale = user['locale'] as String?;
+      if (savedLocale == 'en' || savedLocale == 'fr') {
+        sessionState.setLocale(savedLocale!);
+      }
       if (mounted) {
         Navigator.of(context).pushReplacement(
           MaterialPageRoute(builder: (context) => const MainScreen()),
@@ -214,7 +218,7 @@ class _LoginScreenState extends State<LoginScreen> {
                     borderRadius: BorderRadius.circular(24),
                     boxShadow: [
                       BoxShadow(
-                        color: AppColors.primary.withOpacity(0.1),
+                        color: AppColors.primary.withValues(alpha: 0.1),
                         blurRadius: 20,
                         offset: const Offset(0, 10),
                       ),

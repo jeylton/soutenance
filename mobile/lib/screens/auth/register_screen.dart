@@ -221,7 +221,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                       color: AppColors.textPlaceholder,
                     ),
                     items:
-                        ['Étudiant', 'Médecin', 'Interne', 'Autre'].map((
+                        ['Étudiant', 'Médecin', 'Joueur'].map((
                           String value,
                         ) {
                           return DropdownMenuItem<String>(
@@ -355,7 +355,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                       TextSpan(
                         text: 'Conditions d\'Utilisation',
                         style: TextStyle(
-                          color: AppColors.primary.withOpacity(0.7),
+                          color: AppColors.primary.withValues(alpha: 0.7),
                           decoration: TextDecoration.underline,
                         ),
                       ),
@@ -363,7 +363,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                       TextSpan(
                         text: 'Politique de Confidentialité',
                         style: TextStyle(
-                          color: AppColors.primary.withOpacity(0.7),
+                          color: AppColors.primary.withValues(alpha: 0.7),
                           decoration: TextDecoration.underline,
                         ),
                       ),

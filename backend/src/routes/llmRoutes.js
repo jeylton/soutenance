@@ -5,7 +5,7 @@ const fs = require('fs');
 const path = require('path');
 const supabase = require('../config/supabase');
 const { generateResponse, generatePatientResponse, generateCase, generateCourse, generateQuizFromCase } = require('../services/llmService');
-const { resolveAvatarProfile } = require('../services/avatarVoiceProfile');
+const { resolveAvatarProfile, GOOGLE_TTS_PROFILES } = require('../services/avatarVoiceProfile');
 
 const PUBLISHED_QUIZZES_FILE = path.join(__dirname, '../../data/published_quizzes.json');
 
@@ -73,6 +73,37 @@ const validateSvtCourseContent = (content) => {
   };
 };
 
+function sendLlmError(res, err) {
+  const message = String(err?.message || 'Unknown error');
+  if (message.toLowerCase().includes('required but unavailable')) {
+    const hint = process.env.GROQ_API_KEY
+      ? 'Vérifiez que GROQ_API_KEY est valide sur console.groq.com et que le modèle GROQ_MODEL existe.'
+      : 'Aucune GROQ_API_KEY trouvée dans .env. Ajoutez-la sur console.groq.com (plan gratuit disponible).';
+    return res.status(503).json({ error: `${message}. ${hint}` });
+  }
+  return res.status(500).json({ error: message });
+}
+
+// GET /api/llm/health — teste la connectivité LLM
+router.get('/health', async (req, res) => {
+  const groqKey = String(process.env.GROQ_API_KEY || '').trim();
+  const llamaModel = String(process.env.LLAMA_MODEL || '').trim();
+  const result = {
+    groq: { configured: !!groqKey, key_prefix: groqKey ? groqKey.slice(0, 8) + '...' : null },
+    llama: { configured: !!llamaModel, model: llamaModel || null, url: process.env.LLAMA_BASE_URL || 'http://127.0.0.1:1234/v1' },
+    provider: process.env.LLM_PROVIDER || 'auto',
+  };
+  try {
+    const { generateResponse } = require('../services/llmService');
+    const reply = await generateResponse('Réponds juste "ok"', 'Tu es un assistant. Réponds uniquement "ok".');
+    result.test = reply ? 'ok' : 'failed';
+  } catch (e) {
+    result.test = 'error';
+    result.error = e.message;
+  }
+  return res.json(result);
+});
+
 // Patient endpoint (uses new intelligent system)
 router.post('/patient', async (req, res) => {
   const { case_id, question } = req.body;
@@ -87,20 +118,15 @@ router.post('/patient', async (req, res) => {
     const response = await generatePatientResponse(caseRow, question);
     return res.json({ reply: response });
   } catch (e) {
-    return res.status(500).json({ error: e.message });
+    return sendLlmError(res, e);
   }
 });
 
-// ElevenLabs voice endpoint for patient speech
+// ─── Patient voice synthesis (ElevenLabs → Google Cloud TTS → 501) ──────────
 router.post('/patient-voice', async (req, res) => {
   const { case_id, text, voice_id } = req.body || {};
   if (!case_id || !text) {
     return res.status(400).json({ error: 'case_id and text required' });
-  }
-
-  const apiKey = (process.env.ELEVENLABS_API_KEY || '').trim();
-  if (!apiKey) {
-    return res.status(501).json({ error: 'ELEVENLABS_API_KEY not configured' });
   }
 
   try {
@@ -110,9 +136,7 @@ router.post('/patient-voice', async (req, res) => {
       .eq('id', case_id)
       .single();
 
-    if (caseError) {
-      return res.status(500).json({ error: caseError.message });
-    }
+    if (caseError) return res.status(500).json({ error: caseError.message });
 
     const history = caseRow?.medical_history || {};
     const profile = resolveAvatarProfile({
@@ -121,46 +145,135 @@ router.post('/patient-voice', async (req, res) => {
       gender: history?.gender,
     });
 
-    const selectedVoiceId =
-      (voice_id || '').toString().trim() ||
-      (profile?.voiceId || '').toString().trim() ||
-      (history?.eleven_voice_id || '').toString().trim();
+    // ── Tentative 1 : ElevenLabs ──────────────────────────────────────────────
+    const elevenKey = (process.env.ELEVENLABS_API_KEY || '').trim();
+    if (elevenKey) {
+      const selectedVoiceId =
+        (voice_id || '').toString().trim() ||
+        (profile?.voiceId || '').toString().trim() ||
+        (history?.eleven_voice_id || '').toString().trim();
 
-    if (!selectedVoiceId) {
-      return res.status(422).json({ error: 'No ElevenLabs voice available for this patient' });
+      if (selectedVoiceId) {
+        try {
+          const elevenRes = await axios.post(
+            `https://api.elevenlabs.io/v1/text-to-speech/${selectedVoiceId}`,
+            {
+              text,
+              model_id: process.env.ELEVENLABS_MODEL_ID || 'eleven_multilingual_v2',
+              voice_settings: { stability: 0.4, similarity_boost: 0.8, style: 0.15, use_speaker_boost: true },
+            },
+            {
+              responseType: 'arraybuffer',
+              headers: { 'xi-api-key': elevenKey, 'Content-Type': 'application/json', Accept: 'audio/mpeg' },
+              timeout: 15000,
+            },
+          );
+          res.setHeader('Content-Type', 'audio/mpeg');
+          res.setHeader('Cache-Control', 'no-store');
+          res.setHeader('x-dica-tts-provider', 'elevenlabs');
+          return res.send(Buffer.from(elevenRes.data));
+        } catch (elevenErr) {
+          console.warn('ElevenLabs unavailable, falling back to Google TTS:', elevenErr?.response?.status || elevenErr.message);
+        }
+      }
     }
 
-    const elevenRes = await axios.post(
-      `https://api.elevenlabs.io/v1/text-to-speech/${selectedVoiceId}`,
-      {
-        text,
-        model_id: process.env.ELEVENLABS_MODEL_ID || 'eleven_multilingual_v2',
-        voice_settings: {
-          stability: 0.4,
-          similarity_boost: 0.8,
-          style: 0.15,
-          use_speaker_boost: true,
-        },
-      },
-      {
-        responseType: 'arraybuffer',
-        headers: {
-          'xi-api-key': apiKey,
-          'Content-Type': 'application/json',
-          Accept: 'audio/mpeg',
-        },
-      },
-    );
+    // ── Tentative 2 : VoiceRSS (gratuit, 350 req/jour, sans carte bancaire) ──
+    const voiceRssKey = (process.env.VOICERSS_API_KEY || '').trim();
+    if (voiceRssKey) {
+      // Profil voix : rate (-10 à +10), voix selon genre
+      const hint = profile?.hint || 'male_young';
+      const voiceRssRate = {
+        male_young:   0,
+        female_young: 0,
+        male_old:     -2,
+        female_old:   -2,
+        child_male:   3,
+        child_female: 3,
+      }[hint] ?? 0;
 
-    res.setHeader('Content-Type', 'audio/mpeg');
-    res.setHeader('Cache-Control', 'no-store');
-    res.setHeader('x-dica-voice-id', selectedVoiceId);
-    return res.send(Buffer.from(elevenRes.data));
+      // VoiceRSS French voices (fr-fr)
+      const voiceRssVoice = {
+        male_young:   'Axel',
+        female_young: 'Bette',
+        male_old:     'Axel',
+        female_old:   'Nica',
+        child_male:   'Axel',
+        child_female: 'Bette',
+      }[hint] ?? 'Bette';
+
+      try {
+        const params = new URLSearchParams({
+          key: voiceRssKey,
+          src: text,
+          hl: 'fr-fr',
+          v: voiceRssVoice,
+          r: String(voiceRssRate),
+          c: 'MP3',
+          f: '44khz_16bit_stereo',
+        });
+
+        const voiceRes = await axios.get(
+          `https://api.voicerss.org/?${params.toString()}`,
+          { responseType: 'arraybuffer', timeout: 15000 },
+        );
+
+        // VoiceRSS renvoie du texte si erreur (pas un arraybuffer)
+        const contentType = voiceRes.headers['content-type'] || '';
+        if (!contentType.includes('audio')) {
+          const errText = Buffer.from(voiceRes.data).toString('utf8');
+          throw new Error(`VoiceRSS error: ${errText}`);
+        }
+
+        res.setHeader('Content-Type', 'audio/mpeg');
+        res.setHeader('Cache-Control', 'no-store');
+        res.setHeader('x-dica-tts-provider', 'voicerss');
+        res.setHeader('x-dica-voice-name', voiceRssVoice);
+        return res.send(Buffer.from(voiceRes.data));
+      } catch (vErr) {
+        console.warn('VoiceRSS failed:', vErr.message);
+      }
+    }
+
+    // ── Tentative 3 : Google Cloud TTS (free tier 1M chars/mois) ─────────────
+    const googleKey = (process.env.GOOGLE_TTS_API_KEY || '').trim();
+    if (googleKey) {
+      const gProfile = profile?.googleTts || GOOGLE_TTS_PROFILES.male_young;
+      try {
+        const googleRes = await axios.post(
+          `https://texttospeech.googleapis.com/v1/text:synthesize?key=${googleKey}`,
+          {
+            input: { text },
+            voice: { languageCode: 'fr-FR', name: gProfile.name },
+            audioConfig: {
+              audioEncoding: 'MP3',
+              pitch: gProfile.pitch ?? 0,
+              speakingRate: gProfile.speakingRate ?? 1.0,
+              volumeGainDb: 1.0,
+            },
+          },
+          { headers: { 'Content-Type': 'application/json' }, timeout: 15000 },
+        );
+
+        const audioContent = googleRes.data?.audioContent;
+        if (!audioContent) throw new Error('Google TTS returned empty audio');
+
+        res.setHeader('Content-Type', 'audio/mpeg');
+        res.setHeader('Cache-Control', 'no-store');
+        res.setHeader('x-dica-tts-provider', 'google');
+        res.setHeader('x-dica-voice-name', gProfile.name);
+        return res.send(Buffer.from(audioContent, 'base64'));
+      } catch (googleErr) {
+        console.warn('Google TTS failed:', googleErr?.response?.data?.error?.message || googleErr.message);
+      }
+    }
+
+    // ── Aucun provider → fallback TTS natif côté mobile ──────────────────────
+    return res.status(501).json({
+      error: 'No TTS provider configured. Set VOICERSS_API_KEY in .env to enable cloud voices.',
+    });
   } catch (e) {
-    const details = e?.response?.data
-      ? Buffer.from(e.response.data).toString('utf8').slice(0, 240)
-      : e.message;
-    return res.status(500).json({ error: `ElevenLabs synthesis failed: ${details}` });
+    return res.status(500).json({ error: e.message });
   }
 });
 
@@ -172,35 +285,143 @@ router.post('/tutor', async (req, res) => {
   }
   try {
     const { data: sessionRow, error: sErr } = await supabase.from('sessions').select('*').eq('id', session_id).single();
-    if (sErr) {
-      return res.status(500).json({ error: sErr.message });
-    }
+    if (sErr) return res.status(500).json({ error: sErr.message });
+
     const { data: caseRow, error: cErr } = await supabase.from('cases').select('*').eq('id', sessionRow.case_id).single();
-    if (cErr) {
-      return res.status(500).json({ error: cErr.message });
-    }
-    const base = caseRow.prompt_tuteur || '';
-    const logic = caseRow.logic_medicale || '';
-    const progress = sessionRow.progress ? JSON.stringify(sessionRow.progress) : '{}';
-    const prompt = [
-      base,
-      'Tu es un tuteur pedagogique. Analyse le raisonnement clinique.',
-      'Logique medicale attendue: ' + logic,
-      'Actions de letudiant: ' + progress,
-      'Fournis un feedback structure: points forts, erreurs, recommandations.',
-    ].join('\n');
-    const response = await generateResponse(prompt);
+    if (cErr) return res.status(500).json({ error: cErr.message });
+
+    const { data: examsRows } = await supabase.from('case_exams').select('name,is_relevant').eq('case_id', sessionRow.case_id);
+
+    const progress = sessionRow.progress || {};
+    const requestedExams = (progress.requested_exams || []).map(e => e?.name || e).filter(Boolean);
+    const studentDiagnosis = progress.conclusion?.diagnosis || 'Non fourni';
+    const studentPlan = progress.conclusion?.plan || 'Non fourni';
+    const studentTreatment = progress.conclusion?.treatment || null;
+
+    const expectedDiagnosis = caseRow.disease_id || caseRow.logic_medicale || 'Non renseigné';
+    const expectedTreatment = (caseRow.medical_history?.treatment || [])
+      .map(t => `${t.medication || ''} ${t.dosage || ''} ${t.frequency || ''} ${t.duration || ''}`.trim())
+      .filter(Boolean)
+      .join(', ') || 'Non renseigné';
+    const treatmentNotes = caseRow.medical_history?.treatment_notes || '';
+
+    const relevantExams = (examsRows || []).filter(e => e.is_relevant !== false).map(e => e.name);
+    const decoyExams = (examsRows || []).filter(e => e.is_relevant === false).map(e => e.name);
+    const orderedRelevant = requestedExams.filter(n => relevantExams.some(r => r.toLowerCase().includes(n.toLowerCase()) || n.toLowerCase().includes(r.toLowerCase())));
+    const orderedDecoys = requestedExams.filter(n => decoyExams.some(r => r.toLowerCase().includes(n.toLowerCase()) || n.toLowerCase().includes(r.toLowerCase())));
+
+    const tutorContext = caseRow.prompt_tuteur || '';
+
+    const systemPrompt = `Tu es un tuteur médical expert. Tu fournis un retour pédagogique structuré, bienveillant mais rigoureux, à un étudiant en médecine qui vient de terminer une simulation clinique.
+
+TON FEEDBACK DOIT OBLIGATOIREMENT SUIVRE CETTE STRUCTURE EXACTE (utilise ces titres de section) :
+
+POINTS FORTS
+[Liste ce que l'étudiant a bien fait : bonne démarche, examens pertinents demandés, diagnostic proche, traitement approprié]
+
+POINTS À AMÉLIORER
+[Liste les erreurs ou manques : examens leurres commandés, diagnostic erroné, traitement manquant ou inapproprié, justification trop courte]
+
+DIAGNOSTIC ATTENDU
+[Annonce clairement la bonne réponse et explique pourquoi ce diagnostic est correct au vu des symptômes et examens]
+
+TRAITEMENT DE RÉFÉRENCE
+[Donne le traitement attendu avec posologie, et explique la logique thérapeutique]
+
+CONSEIL POUR LA PROCHAINE FOIS
+[1 à 2 conseils pratiques pour progresser]
+
+RÈGLES :
+- Langage pédagogique, encourageant mais précis
+- Réponse en français
+- Jamais de listes à puces : rédige en prose continue
+- Chaque section doit faire au minimum 2-3 phrases complètes
+- Cite les actions concrètes de l'étudiant (examens commandés, diagnostic posé)${tutorContext ? `\n\nNotes du créateur du cas (contexte pédagogique) :\n${tutorContext}` : ''}`;
+
+    const userMessage = `RÉSUMÉ DE LA SESSION :
+Patient : ${caseRow.patient_name || 'Inconnu'}, ${caseRow.medical_history?.age || '?'} ans, ${caseRow.medical_history?.gender || '?'}
+Motif de consultation : ${caseRow.consultation_reason || 'Non précisé'}
+Symptômes principaux : ${caseRow.initial_symptoms || 'Non précisé'}
+
+ACTIONS DE L'ÉTUDIANT :
+- Examens commandés : ${requestedExams.length > 0 ? requestedExams.join(', ') : 'Aucun'}
+  → Pertinents : ${orderedRelevant.length > 0 ? orderedRelevant.join(', ') : 'Aucun'}
+  → Leurres commandés par erreur : ${orderedDecoys.length > 0 ? orderedDecoys.join(', ') : 'Aucun'}
+- Diagnostic posé : ${studentDiagnosis}
+- Justification clinique : ${studentPlan}
+- Traitement proposé : ${studentTreatment ? `${studentTreatment.medication || ''} ${studentTreatment.dosage || ''} ${studentTreatment.frequency || ''}`.trim() : 'Non proposé'}
+
+RÉPONSES ATTENDUES (ne pas révéler à l'avance dans le feedback — les annoncer dans les sections dédiées) :
+- Diagnostic correct : ${expectedDiagnosis}
+- Traitement de référence : ${expectedTreatment}${treatmentNotes ? `\n- Notes thérapeutiques : ${treatmentNotes}` : ''}
+- Examens pertinents disponibles : ${relevantExams.join(', ') || 'Non listés'}
+
+Rédige maintenant le feedback structuré complet.`;
+
+    const response = await generateResponse(userMessage, systemPrompt);
     const { error: updErr } = await supabase.from('sessions').update({ feedback: response }).eq('id', session_id);
     if (updErr) console.warn('Failed updating feedback:', updErr.message);
     return res.json({ feedback: response });
   } catch (e) {
-    return res.status(500).json({ error: e.message });
+    return sendLlmError(res, e);
   }
+});
+
+// ─── LLM Providers Status (safe, no secrets) ───
+router.get('/providers', async (req, res) => {
+  const normalizeProviderName = (value) => {
+    const raw = String(value || '').trim().toLowerCase();
+    if (!raw) return '';
+    if (raw === 'llama' || raw === 'llama-local' || raw === 'lmstudio') return 'llama';
+    return raw;
+  };
+
+  const truthy = (value) => {
+    const raw = String(value || '').trim().toLowerCase();
+    return raw === '1' || raw === 'true' || raw === 'yes' || raw === 'on';
+  };
+
+  const groqRequired = truthy(process.env.GROQ_REQUIRED);
+  const llamaRequired = truthy(process.env.LLAMA_REQUIRED || process.env.LMSTUDIO_REQUIRED);
+  const configuredPrimary = normalizeProviderName(process.env.LLM_PROVIDER || process.env.LLM_PRIMARY);
+
+  const groqEnabled = String(process.env.GROQ_API_KEY || '').trim().length > 0;
+  const llamaModel = String(process.env.LLAMA_MODEL || process.env.OPENAI_MODEL || '').trim();
+  const llamaEnabled = llamaModel.length > 0;
+
+  const primary = groqRequired
+    ? 'groq'
+    : llamaRequired
+      ? 'llama'
+      : (configuredPrimary === 'groq' || configuredPrimary === 'llama')
+        ? configuredPrimary
+        : (groqEnabled ? 'groq' : 'llama');
+
+  const other = primary === 'groq' ? 'llama' : 'groq';
+
+  return res.json({
+    primary,
+    fallback: other,
+    providers: {
+      groq: {
+        enabled: groqEnabled,
+        required: groqRequired,
+        baseUrl: String(process.env.GROQ_BASE_URL || 'https://api.groq.com/openai/v1').trim(),
+        model: String(process.env.GROQ_MODEL || 'llama-3.1-8b-instant').trim(),
+      },
+      llama: {
+        enabled: llamaEnabled,
+        required: llamaRequired,
+        baseUrl: String(process.env.LLAMA_BASE_URL || process.env.OPENAI_BASE_URL || 'http://127.0.0.1:1234/v1').trim(),
+        model: llamaModel,
+      },
+    },
+  });
 });
 
 // ─── AI Case Generation ───
 router.post('/generate-case', async (req, res) => {
-  const { specialty_name, specialty_id, difficulty, excluded_diagnoses } = req.body;
+  const { specialty_name, specialty_id, difficulty, excluded_diagnoses, strict_unique_specialty } = req.body;
   if (!specialty_name || !difficulty) {
     return res.status(400).json({ error: 'specialty_name and difficulty required' });
   }
@@ -217,19 +438,33 @@ router.post('/generate-case', async (req, res) => {
       resolvedSpecialtyId = specByName?.id || null;
     }
 
-    let excludedDiagnoses = [];
-    if (resolvedSpecialtyId) {
-      const { data: existingCases } = await supabase
-        .from('cases')
-        .select('disease_id,logic_medicale')
-        .eq('specialty_id', resolvedSpecialtyId);
+    const strictUnique = strict_unique_specialty === true;
 
+    let excludedDiagnoses = [];
+    if (strictUnique && resolvedSpecialtyId) {
+      // Strict uniqueness (optional): exclude ALL diagnoses already used for this specialty.
       const unique = new Map();
-      for (const row of (existingCases || [])) {
-        const raw = (row?.disease_id || row?.logic_medicale || '').toString().trim();
-        if (!raw) continue;
-        const key = normalizeDiagnosisKey(raw);
-        if (key && !unique.has(key)) unique.set(key, raw);
+      const pageSize = 1000;
+      for (let offset = 0; offset <= 10000; offset += pageSize) {
+        const { data: existingCases, error: existingCasesErr } = await supabase
+          .from('cases')
+          .select('disease_id,logic_medicale,status')
+          .eq('specialty_id', resolvedSpecialtyId)
+          .in('status', ['active', 'draft'])
+          .range(offset, offset + pageSize - 1);
+
+        if (existingCasesErr) {
+          return res.status(500).json({ error: existingCasesErr.message });
+        }
+
+        for (const row of (existingCases || [])) {
+          const raw = (row?.disease_id || row?.logic_medicale || '').toString().trim();
+          if (!raw) continue;
+          const key = normalizeDiagnosisKey(raw);
+          if (key && !unique.has(key)) unique.set(key, raw);
+        }
+
+        if (!existingCases || existingCases.length < pageSize) break;
       }
       excludedDiagnoses = Array.from(unique.values());
     }
@@ -298,10 +533,16 @@ router.post('/generate-case', async (req, res) => {
       (d) => !excludedDiagnoses.some((e) => normalizeDiagnosisKey(e) === normalizeDiagnosisKey(d)),
     );
 
-    for (let attempt = 1; attempt <= 4; attempt += 1) {
-      const forcedDiagnosis = filteredDifficultyPool.length > 0
-        ? filteredDifficultyPool[(attempt - 1) % filteredDifficultyPool.length]
-        : '';
+    const pickDiagnosisForAttempt = (pool, attempt) => {
+      if (!Array.isArray(pool) || pool.length === 0) return '';
+      const baseIndex = Math.floor(Math.random() * pool.length);
+      const offset = Math.max(0, (Number(attempt) || 1) - 1);
+      return pool[(baseIndex + offset) % pool.length];
+    };
+
+    const maxAttempts = 8;
+    for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+      const forcedDiagnosis = pickDiagnosisForAttempt(filteredDifficultyPool, attempt);
 
       caseData = await generateCase(specialty_name, difficulty, {
         excludedDiagnoses,
@@ -314,27 +555,36 @@ router.post('/generate-case', async (req, res) => {
 
       const alreadyUsed = excludedDiagnoses.some((d) => normalizeDiagnosisKey(d) === lastDiagnosisKey);
       if (!alreadyUsed) break;
-      if (attempt === 4) {
-        return res.status(409).json({
-          error: 'Impossible de générer une nouvelle maladie inédite pour cette spécialité. Toutes les options semblent déjà utilisées.',
-          specialty_id: resolvedSpecialtyId,
-        });
-      }
     }
 
-    return res.json({ case: caseData });
+    const duplicate =
+      lastDiagnosisKey && excludedDiagnoses.some((d) => normalizeDiagnosisKey(d) === lastDiagnosisKey);
+
+    // Best-effort mode: never block bulk publishing at episode 8-9.
+    // We still try to avoid duplicates, but we don't hard-fail if the pool is exhausted.
+    return res.json({
+      case: caseData,
+      ...(duplicate
+        ? {
+            warning:
+              "Diagnostic déjà présent dans la liste d'exclusion (pool probablement épuisé). Cas renvoyé quand même en mode best-effort.",
+          }
+        : {}),
+    });
   } catch (e) {
-    return res.status(500).json({ error: e.message });
+    return sendLlmError(res, e);
   }
 });
 
 // ─── AI Quiz Generation (disease-specific) ───
 router.post('/generate-quiz', async (req, res) => {
-  const { specialty_id, question_count, disease, case_id } = req.body || {};
+  const { specialty_id, question_count, disease, case_id, difficulty } = req.body || {};
   const specialtyId = Number(specialty_id);
   const caseId = Number(case_id);
-  const questionCount = Number(question_count) || 30;
+  // Product rule: always generate exactly 30 questions.
+  const questionCount = 30;
   const diseaseFilter = String(disease || '').trim();
+  const requestedDifficulty = Number(difficulty);
 
   if (!Number.isFinite(specialtyId) || specialtyId <= 0) {
     return res.status(400).json({ error: 'specialty_id required' });
@@ -343,7 +593,7 @@ router.post('/generate-quiz', async (req, res) => {
   try {
     const { data: cases, error: casesError } = await supabase
       .from('cases')
-      .select('id,patient_name,consultation_reason,initial_symptoms,medical_history,disease_id,logic_medicale,specialty_id,status')
+      .select('id,patient_name,consultation_reason,initial_symptoms,medical_history,disease_id,logic_medicale,specialty_id,status,difficulty')
       .eq('specialty_id', specialtyId)
       .in('status', ['active', 'draft'])
       .limit(200);
@@ -366,8 +616,47 @@ router.post('/generate-quiz', async (req, res) => {
         .trim();
 
     let candidates = withDisease;
+
+    if (Number.isFinite(requestedDifficulty) && requestedDifficulty > 0) {
+      const parseDifficulty = (value) => {
+        const n = Number(value);
+        return Number.isFinite(n) ? n : null;
+      };
+
+      const exact = candidates.filter((c) => parseDifficulty(c?.difficulty) === requestedDifficulty);
+      if (exact.length > 0) {
+        candidates = exact;
+      } else {
+        // Fallback: pick cases with the closest available difficulty.
+        // This avoids blocking quiz publication when data is not perfectly tagged.
+        const valid = candidates.filter((c) => {
+          const n = parseDifficulty(c?.difficulty);
+          return n !== null && n > 0;
+        });
+
+        if (valid.length === 0) {
+          // If difficulties are missing/unparseable, just ignore the filter.
+          candidates = candidates;
+        } else {
+          let bestDelta = Number.POSITIVE_INFINITY;
+          let best = [];
+          for (const c of valid) {
+            const n = parseDifficulty(c?.difficulty);
+            if (n === null) continue;
+            const delta = Math.abs(n - requestedDifficulty);
+            if (delta < bestDelta) {
+              bestDelta = delta;
+              best = [c];
+            } else if (delta === bestDelta) {
+              best.push(c);
+            }
+          }
+          if (best.length > 0) candidates = best;
+        }
+      }
+    }
     if (Number.isFinite(caseId) && caseId > 0) {
-      candidates = withDisease.filter((c) => Number(c?.id) === caseId);
+      candidates = candidates.filter((c) => Number(c?.id) === caseId);
       if (candidates.length === 0) {
         return res.status(404).json({ error: 'Cas publié non trouvé pour cette spécialité' });
       }
@@ -405,7 +694,7 @@ router.post('/generate-quiz', async (req, res) => {
       },
     });
   } catch (e) {
-    return res.status(500).json({ error: e.message });
+    return sendLlmError(res, e);
   }
 });
 
@@ -451,6 +740,7 @@ router.get('/quiz-diseases/:specialtyId', async (req, res) => {
 // ─── Quiz published cases by specialty ───
 router.get('/quiz-cases/:specialtyId', async (req, res) => {
   const specialtyId = Number(req.params.specialtyId);
+  const requestedSeason = Number(req.query.season || 0);
   if (!Number.isFinite(specialtyId) || specialtyId <= 0) {
     return res.status(400).json({ error: 'specialtyId invalide' });
   }
@@ -458,7 +748,7 @@ router.get('/quiz-cases/:specialtyId', async (req, res) => {
   try {
     const { data: rows, error } = await supabase
       .from('cases')
-      .select('id,patient_name,consultation_reason,disease_id,logic_medicale,status')
+      .select('id,patient_name,consultation_reason,disease_id,logic_medicale,status,medical_history')
       .eq('specialty_id', specialtyId)
       .eq('status', 'active')
       .order('id', { ascending: false })
@@ -473,15 +763,33 @@ router.get('/quiz-cases/:specialtyId', async (req, res) => {
         const patient = String(row?.patient_name || '').trim();
         const reason = String(row?.consultation_reason || '').trim();
         const label = patient || reason || `Cas #${row.id}`;
+        const season = Number(row?.medical_history?.season);
+        const episode = Number(row?.medical_history?.episode);
         return {
           id: row.id,
           disease,
           label,
+          season: Number.isFinite(season) && season > 0 ? season : null,
+          episode: Number.isFinite(episode) && episode > 0 ? episode : null,
         };
       })
       .filter(Boolean);
 
-    return res.json({ cases });
+    const filtered = Number.isFinite(requestedSeason) && requestedSeason > 0
+      ? cases.filter((c) => Number(c?.season) === requestedSeason)
+      : cases;
+
+    const sorted = [...filtered].sort((a, b) => {
+      const sa = Number(a?.season) || 0;
+      const sb = Number(b?.season) || 0;
+      if (sa !== sb) return sa - sb;
+      const ea = Number(a?.episode) || 0;
+      const eb = Number(b?.episode) || 0;
+      if (ea !== eb) return ea - eb;
+      return Number(b?.id) - Number(a?.id);
+    });
+
+    return res.json({ cases: sorted });
   } catch (e) {
     return res.status(500).json({ error: e.message });
   }
@@ -499,7 +807,54 @@ router.post('/publish-quiz', async (req, res) => {
     return res.status(400).json({ error: 'Quiz vide, publication impossible' });
   }
 
+  if (questions.length !== 30) {
+    return res.status(400).json({
+      error: `Le quiz doit contenir exactement 30 questions (reçu: ${questions.length}).`,
+    });
+  }
+
   const published = loadPublishedQuizzes();
+
+  // Guardrail: prevent publishing into a season that is already complete (10 episodes)
+  // for the same specialty. This reduces accidental re-publication of Season 1.
+  if (status === 'published') {
+    const resolvedSpecialtyId = Number(quiz.specialty_id || payload.specialty_id || 0);
+    const seasonNumber = Number(quiz.season ?? payload.season);
+    const incomingEpisode = Number(quiz.episode ?? payload.episode ?? quiz.level ?? payload.level);
+    const incomingKey = String(quiz.quiz_key || '').trim();
+    if (
+      Number.isFinite(resolvedSpecialtyId) &&
+      resolvedSpecialtyId > 0 &&
+      Number.isFinite(seasonNumber) &&
+      seasonNumber > 0
+    ) {
+      const episodes = new Set(
+        (published || [])
+          .filter((q) => String(q?.status || 'published').toLowerCase() === 'published')
+          .filter((q) => Number(q?.specialty_id) === resolvedSpecialtyId)
+          .filter((q) => Number(q?.season) === seasonNumber)
+          .map((q) => Number(q?.episode))
+          .filter((n) => Number.isFinite(n) && n >= 1 && n <= 10),
+      );
+      if (episodes.size >= 10) {
+        const isUpdatingExistingEpisode =
+          (Number.isFinite(incomingEpisode) && episodes.has(incomingEpisode)) ||
+          (incomingKey && (published || []).some((q) => String(q?.quiz_key || '').trim() === incomingKey));
+
+        if (isUpdatingExistingEpisode) {
+          // Allow updates (upsert) of an existing episode even if season is full.
+          // This is important for fixing typos or regenerating a quiz.
+        } else {
+        return res.status(409).json({
+          error: `La saison ${seasonNumber} est déjà publiée (10 épisodes). Publiez une nouvelle saison (ex: ${
+            seasonNumber + 1
+          }).`,
+        });
+        }
+      }
+    }
+  }
+
   const incomingQuizKey = String(quiz.quiz_key || '').trim();
   const shouldUpsert = status !== 'draft';
   const existingIdx = shouldUpsert
@@ -529,6 +884,23 @@ router.post('/publish-quiz', async (req, res) => {
     disease: String(quiz.disease || '').trim(),
     specialty_id: resolvedSpecialtyId,
     specialty_name: specialtyName || null,
+    season: (() => {
+      const n = Number(quiz.season ?? payload.season);
+      return Number.isFinite(n) && n > 0 ? n : null;
+    })(),
+    episode: (() => {
+      // Some admin UIs historically send the episode index as `level`.
+      const n = Number(quiz.episode ?? payload.episode ?? quiz.level ?? payload.level);
+      return Number.isFinite(n) && n > 0 ? n : null;
+    })(),
+    level: (() => {
+      const n = Number(quiz.level ?? payload.level);
+      return Number.isFinite(n) && n > 0 ? n : null;
+    })(),
+    difficulty: (() => {
+      const n = Number(quiz.difficulty ?? payload.difficulty);
+      return Number.isFinite(n) && n > 0 ? n : null;
+    })(),
     case_id: Number(quiz.case_id || payload.case_id || 0) || null,
     quiz_key: String(quiz.quiz_key || id),
     questions,
@@ -558,6 +930,7 @@ router.post('/publish-quiz', async (req, res) => {
 router.get('/published-quizzes', async (req, res) => {
   const status = String(req.query.status || 'published').trim().toLowerCase();
   const specialtyId = Number(req.query.specialty_id || 0);
+  const season = Number(req.query.season || 0);
   const rows = loadPublishedQuizzes();
   const withDefaults = (rows || []).map((q) => ({
     ...q,
@@ -572,7 +945,23 @@ router.get('/published-quizzes', async (req, res) => {
     ? byStatus.filter((q) => Number(q?.specialty_id) === specialtyId)
     : byStatus;
 
-  return res.json({ quizzes: filtered });
+  const filteredBySeason = Number.isFinite(season) && season > 0
+    ? filtered.filter((q) => Number(q?.season) === season)
+    : filtered;
+
+  const sorted = [...filteredBySeason].sort((a, b) => {
+    const sa = Number(a?.season) || 0;
+    const sb = Number(b?.season) || 0;
+    if (sa !== sb) return sa - sb;
+    const ea = Number(a?.episode) || 0;
+    const eb = Number(b?.episode) || 0;
+    if (ea !== eb) return ea - eb;
+    const ta = Date.parse(String(a?.updated_at || a?.created_at || '')) || 0;
+    const tb = Date.parse(String(b?.updated_at || b?.created_at || '')) || 0;
+    return tb - ta;
+  });
+
+  return res.json({ quizzes: sorted });
 });
 
 // ─── Update published quiz metadata/status (admin) ───
@@ -652,7 +1041,7 @@ router.post('/generate-course', async (req, res) => {
 
     return res.json({ course: courseData });
   } catch (e) {
-    return res.status(500).json({ error: e.message });
+    return sendLlmError(res, e);
   }
 });
 
@@ -694,7 +1083,7 @@ Réponds UNIQUEMENT avec l'indice, sans introduction ni conclusion.`;
     const hint = await generateResponse(prompt);
     return res.json({ hint });
   } catch (e) {
-    return res.status(500).json({ error: e.message });
+    return sendLlmError(res, e);
   }
 });
 

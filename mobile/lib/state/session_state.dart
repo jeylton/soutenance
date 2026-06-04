@@ -26,7 +26,18 @@ class SessionState extends ChangeNotifier {
 
   // Theme
   bool _isDarkTheme = false;
-  bool _useFreePatientVoices = true;
+  bool _useFreePatientVoices = false;
+
+  // Streak quotidien
+  int _streak = 0;
+
+  // Trophées et classement (chargés depuis le profil)
+  int _trophies = 0;
+  String _rankLabel = '—';
+
+  // Limite de questions par simulation
+  static const int maxQuestionsPerSession = 20;
+  int _questionCount = 0;
 
   int? get caseId => _caseId;
   int? get sessionId => _sessionId;
@@ -49,6 +60,12 @@ class SessionState extends ChangeNotifier {
   bool get isFrench => _locale == 'fr';
   bool get isDarkTheme => _isDarkTheme;
   bool get useFreePatientVoices => _useFreePatientVoices;
+  int get questionCount => _questionCount;
+  int get questionsRemaining => (maxQuestionsPerSession - _questionCount).clamp(0, maxQuestionsPerSession);
+  bool get isQuestionLimitReached => _questionCount >= maxQuestionsPerSession;
+  int get streak => _streak;
+  int get trophies => _trophies;
+  String get rankLabel => _rankLabel;
   int get remainingSeconds =>
       _isExamMode && _examTimeLimitMinutes != null
           ? (_examTimeLimitMinutes! * 60) - _elapsedSeconds
@@ -83,6 +100,7 @@ class SessionState extends ChangeNotifier {
     String? avatarId,
     String? activeTitle,
     int? hintBalance,
+    String? locale,
   }) {
     if (name != null) _userName = name;
     if (email != null) _userEmail = email;
@@ -93,6 +111,7 @@ class SessionState extends ChangeNotifier {
     if (avatarId != null) _avatarId = avatarId;
     if (activeTitle != null) _activeTitle = activeTitle;
     if (hintBalance != null) _hintBalance = hintBalance;
+    if (locale != null) _locale = locale;
     notifyListeners();
   }
 
@@ -109,7 +128,26 @@ class SessionState extends ChangeNotifier {
     _elapsedSeconds = 0;
     _isExamMode = isExam;
     _examTimeLimitMinutes = timeLimitMinutes;
+    _questionCount = 0; // Réinitialiser le compteur à chaque nouveau cas
     notifyListeners();
+  }
+
+  void setStreak(int value) {
+    _streak = value;
+    notifyListeners();
+  }
+
+  void setTrophiesAndRank({required int trophies, required String rankLabel}) {
+    _trophies = trophies;
+    _rankLabel = rankLabel;
+    notifyListeners();
+  }
+
+  void incrementQuestionCount() {
+    if (_questionCount < maxQuestionsPerSession) {
+      _questionCount++;
+      notifyListeners();
+    }
   }
 
   void tickTimer() {
@@ -141,6 +179,7 @@ class SessionState extends ChangeNotifier {
     _elapsedSeconds = 0;
     _isExamMode = false;
     _examTimeLimitMinutes = null;
+    _questionCount = 0;
     notifyListeners();
   }
 
@@ -163,7 +202,7 @@ class SessionState extends ChangeNotifier {
     _isExamMode = false;
     _examTimeLimitMinutes = null;
     _isDarkTheme = false;
-    _useFreePatientVoices = true;
+    _useFreePatientVoices = false; // Préférer ElevenLabs si disponible
     notifyListeners();
   }
 }

@@ -348,9 +348,30 @@ router.post('/:id/conclude', async (req, res) => {
           `Score obtenu: ${score}/20`,
           'Fournis un feedback structuré en français: Points forts, Erreurs identifiées, Analyse du traitement proposé (comparer avec le traitement de référence), Recommandations pour progresser.',
         ].join('\n');
-        const feedback = await generateResponse(prompt);
-        await supabase.from('sessions').update({ feedback }).eq('id', id);
-        console.log(`[AutoFeedback] Generated for session ${id}`);
+        const fallbackFeedback = [
+          'Feedback tuteur (mode dégradé):',
+          `Score: ${score}/20`,
+          logic ? `Diagnostic attendu: ${logic}` : null,
+          treatmentRef && treatmentRef.length > 0
+            ? `Traitement de référence: ${JSON.stringify(treatmentRef)}`
+            : 'Traitement de référence: non défini pour ce cas.',
+          treatmentNotes ? `Notes thérapeutiques: ${treatmentNotes}` : null,
+          'Résumé: la génération IA du feedback n\'est pas disponible pour le moment. Utilisez le score et le traitement de référence pour vous auto-corriger, puis rejouez le cas.',
+        ].filter(Boolean).join('\n');
+
+        let feedback = null;
+        try {
+          feedback = await generateResponse(prompt);
+        } catch (llmErr) {
+          console.warn('[AutoFeedback] LLM error:', llmErr.message);
+        }
+
+        const finalFeedback = (feedback && String(feedback).trim().length > 0)
+          ? feedback
+          : fallbackFeedback;
+
+        await supabase.from('sessions').update({ feedback: finalFeedback }).eq('id', id);
+        console.log(`[AutoFeedback] Stored for session ${id}`);
       } catch (fbErr) {
         console.warn('[AutoFeedback] Error:', fbErr.message);
       }

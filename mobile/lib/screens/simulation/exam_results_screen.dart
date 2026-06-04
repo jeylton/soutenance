@@ -156,7 +156,7 @@ class _ExamResultsScreenState extends State<ExamResultsScreen>
                 borderRadius: BorderRadius.circular(12),
                 boxShadow: [
                   BoxShadow(
-                    color: Colors.black.withOpacity(0.05),
+                    color: Colors.black.withValues(alpha: 0.05),
                     blurRadius: 8,
                     offset: const Offset(0, 2),
                   ),
@@ -204,7 +204,7 @@ class _ExamResultsScreenState extends State<ExamResultsScreen>
         indicatorSize: TabBarIndicatorSize.tab,
         indicatorWeight: 3,
         dividerColor: const Color(0xFFE2E8F0),
-        tabs: const [Tab(text: 'EXAM'), Tab(text: 'CONCLUSION')],
+        tabs: const [Tab(text: 'EXAMENS'), Tab(text: 'CONCLUSION')],
       ),
     );
   }
@@ -218,7 +218,7 @@ class _ExamResultsScreenState extends State<ExamResultsScreen>
           margin: const EdgeInsets.only(bottom: 16),
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
           decoration: BoxDecoration(
-            color: AppColors.primary.withOpacity(0.08),
+            color: AppColors.primary.withValues(alpha: 0.08),
             borderRadius: BorderRadius.circular(12),
           ),
           child: Row(
@@ -230,7 +230,7 @@ class _ExamResultsScreenState extends State<ExamResultsScreen>
               ),
               const SizedBox(width: 10),
               Text(
-                'REQUESTED EXAMS',
+                'EXAMENS COMMANDÉS',
                 style: GoogleFonts.outfit(
                   fontSize: 12,
                   fontWeight: FontWeight.w900,
@@ -287,7 +287,7 @@ class _ExamResultsScreenState extends State<ExamResultsScreen>
         borderRadius: BorderRadius.circular(20),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.04),
+            color: Colors.black.withValues(alpha: 0.04),
             blurRadius: 12,
             offset: const Offset(0, 4),
           ),
@@ -423,7 +423,7 @@ class _ExamResultsScreenState extends State<ExamResultsScreen>
         borderRadius: BorderRadius.circular(20),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.04),
+            color: Colors.black.withValues(alpha: 0.04),
             blurRadius: 12,
             offset: const Offset(0, 4),
           ),
@@ -574,16 +574,30 @@ class _ExamResultsScreenState extends State<ExamResultsScreen>
   }
 
   Widget _buildConclusionTab(BuildContext context) {
+    final sessionState = Provider.of<SessionState>(context, listen: false);
+    final caseData = sessionState.caseData ?? {};
+    final medical = caseData['medical_history'] is Map
+        ? Map<String, dynamic>.from(caseData['medical_history'] as Map)
+        : <String, dynamic>{};
+    final age = medical['age']?.toString() ?? '';
+    final gender = (medical['gender'] ?? '').toString();
+    final reason = (caseData['consultation_reason'] ?? '').toString().trim();
+    final chiefComplaint = [
+      if (gender.isNotEmpty) gender,
+      if (age.isNotEmpty) '$age ans',
+      if (reason.isNotEmpty) reason,
+    ].join(', ');
+
     return ListView(
       padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
       children: [
-        // Chief Complaint banner
+        // Motif de consultation (données réelles du cas)
         Container(
           padding: const EdgeInsets.all(18),
           decoration: BoxDecoration(
-            color: AppColors.primary.withOpacity(0.07),
+            color: AppColors.primary.withValues(alpha: 0.07),
             borderRadius: BorderRadius.circular(16),
-            border: Border.all(color: AppColors.primary.withOpacity(0.15)),
+            border: Border.all(color: AppColors.primary.withValues(alpha: 0.15)),
           ),
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -591,7 +605,7 @@ class _ExamResultsScreenState extends State<ExamResultsScreen>
               Container(
                 padding: const EdgeInsets.all(8),
                 decoration: BoxDecoration(
-                  color: AppColors.primary.withOpacity(0.15),
+                  color: AppColors.primary.withValues(alpha: 0.15),
                   borderRadius: BorderRadius.circular(10),
                 ),
                 child: const Icon(
@@ -606,7 +620,7 @@ class _ExamResultsScreenState extends State<ExamResultsScreen>
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      'CHIEF COMPLAINT',
+                      'MOTIF DE CONSULTATION',
                       style: GoogleFonts.outfit(
                         fontSize: 11,
                         fontWeight: FontWeight.w900,
@@ -616,7 +630,9 @@ class _ExamResultsScreenState extends State<ExamResultsScreen>
                     ),
                     const SizedBox(height: 8),
                     Text(
-                      'Male, 58 years old, presenting with acute retrosternal chest pain radiating to the left arm, associated with diaphoresis and shortness of breath for 2 hours.',
+                      chiefComplaint.isNotEmpty
+                          ? chiefComplaint
+                          : 'Motif non disponible',
                       style: GoogleFonts.outfit(
                         fontSize: 14,
                         fontWeight: FontWeight.w500,
@@ -632,18 +648,18 @@ class _ExamResultsScreenState extends State<ExamResultsScreen>
         ),
         const SizedBox(height: 20),
 
-        // Final Diagnosis
-        _buildFormLabel('FINAL DIAGNOSIS'),
+        // Diagnostic final
+        _buildFormLabel('DIAGNOSTIC FINAL'),
         const SizedBox(height: 8),
         _buildSearchField(
           controller: _diagnosisController,
-          hint: 'Search for a diagnosis (e.g. Myocardial...)',
+          hint: 'Entrez votre diagnostic (ex: Infarctus du myocarde...)',
           icon: LucideIcons.search,
         ),
         const SizedBox(height: 20),
 
-        // Clinical Justification
-        _buildFormLabel('CLINICAL JUSTIFICATION'),
+        // Justification clinique
+        _buildFormLabel('JUSTIFICATION CLINIQUE'),
         const SizedBox(height: 8),
         Container(
           decoration: BoxDecoration(
@@ -660,7 +676,7 @@ class _ExamResultsScreenState extends State<ExamResultsScreen>
             ),
             decoration: InputDecoration(
               hintText:
-                  'Briefly justify your diagnosis based on clinical findings and exams...',
+                  'Justifiez votre diagnostic en vous basant sur les signes cliniques et examens...',
               hintStyle: GoogleFonts.outfit(
                 fontSize: 14,
                 color: const Color(0xFF94A3B8),
@@ -674,8 +690,8 @@ class _ExamResultsScreenState extends State<ExamResultsScreen>
         ),
         const SizedBox(height: 20),
 
-        // Treatment Plan
-        _buildFormLabel('TREATMENT PLAN'),
+        // Plan de traitement
+        _buildFormLabel('PLAN DE TRAITEMENT'),
         const SizedBox(height: 8),
         Container(
           padding: const EdgeInsets.all(16),
@@ -688,7 +704,7 @@ class _ExamResultsScreenState extends State<ExamResultsScreen>
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               _buildTreatmentField(
-                label: 'MEDICATION',
+                label: 'MÉDICAMENT',
                 controller: _medicationController,
                 hint: 'e.g. Aspirin',
               ),
@@ -705,7 +721,7 @@ class _ExamResultsScreenState extends State<ExamResultsScreen>
                   const SizedBox(width: 16),
                   Expanded(
                     child: _buildTreatmentField(
-                      label: 'FREQUENCY',
+                      label: 'FRÉQUENCE',
                       controller: _frequencyController,
                       hint: 'e.g. Once',
                     ),
@@ -726,6 +742,7 @@ class _ExamResultsScreenState extends State<ExamResultsScreen>
                 context,
                 listen: false,
               );
+              final isExamMode = sessionState.isExamMode;
               final id = sessionState.sessionId ?? 0;
               final timeSpent = sessionState.elapsedSeconds;
               try {
@@ -747,18 +764,25 @@ class _ExamResultsScreenState extends State<ExamResultsScreen>
                 final expectedDiagnosis =
                     result['expected_diagnosis'] as String?;
                 if (mounted) {
-                  Navigator.of(context).push(
+                  final finished = await Navigator.of(context).push<bool>(
                     MaterialPageRoute(
-                      builder:
-                          (_) => FeedbackScreen(
-                            score: score,
-                            sessionId: id,
-                            expectedTreatment: expectedTreatment,
-                            treatmentNotes: treatmentNotes,
-                            expectedDiagnosis: expectedDiagnosis,
-                          ),
+                      builder: (_) => FeedbackScreen(
+                        score: score,
+                        sessionId: id,
+                        expectedTreatment: expectedTreatment,
+                        treatmentNotes: treatmentNotes,
+                        expectedDiagnosis: expectedDiagnosis,
+                        popToRootOnFinish: isExamMode,
+                      ),
                     ),
                   );
+
+                  if (!mounted) return;
+
+                  // In case-mode, bubble completion back to SimulationScreen.
+                  if (!isExamMode && finished == true) {
+                    Navigator.of(context).pop(true);
+                  }
                 }
               } catch (e) {
                 if (mounted) {
@@ -770,7 +794,7 @@ class _ExamResultsScreenState extends State<ExamResultsScreen>
             },
             icon: const Icon(LucideIcons.send, size: 20),
             label: Text(
-              'Submit for Evaluation',
+              'Soumettre pour évaluation',
               style: GoogleFonts.outfit(
                 fontWeight: FontWeight.w800,
                 fontSize: 17,
@@ -788,7 +812,7 @@ class _ExamResultsScreenState extends State<ExamResultsScreen>
         ),
         const SizedBox(height: 12),
         Text(
-          'By submitting, your diagnosis will be compared with the clinical gold standard and your score will be calculated.',
+          'En soumettant, votre diagnostic sera comparé au diagnostic attendu et votre score sera calculé.',
           textAlign: TextAlign.center,
           style: GoogleFonts.outfit(
             fontSize: 11,

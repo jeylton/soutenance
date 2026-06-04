@@ -1,5 +1,6 @@
-import 'dart:math';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:flutter_animate/flutter_animate.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:lucide_icons/lucide_icons.dart';
 import '../../theme/app_theme.dart';
@@ -11,6 +12,7 @@ class FeedbackScreen extends StatefulWidget {
   final List<dynamic>? expectedTreatment;
   final String? treatmentNotes;
   final String? expectedDiagnosis;
+  final bool popToRootOnFinish;
 
   const FeedbackScreen({
     super.key,
@@ -19,55 +21,71 @@ class FeedbackScreen extends StatefulWidget {
     this.expectedTreatment,
     this.treatmentNotes,
     this.expectedDiagnosis,
+    this.popToRootOnFinish = true,
   });
 
   @override
   State<FeedbackScreen> createState() => _FeedbackScreenState();
 }
 
-class _FeedbackScreenState extends State<FeedbackScreen>
-    with SingleTickerProviderStateMixin {
-  late AnimationController _controller;
-  late Animation<double> _progressAnimation;
+class _FeedbackScreenState extends State<FeedbackScreen> {
   String _tutorFeedback = '';
   bool _loadingFeedback = true;
+
+  int get _stars {
+    if (widget.score >= 17) return 3;
+    if (widget.score >= 12) return 2;
+    if (widget.score >= 1)  return 1;
+    return 0;
+  }
 
   @override
   void initState() {
     super.initState();
-    final scorePercent = (widget.score / 20.0).clamp(0.0, 1.0);
-    _controller = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 1400),
-    );
-    _progressAnimation = Tween<double>(
-      begin: 0,
-      end: scorePercent,
-    ).animate(CurvedAnimation(parent: _controller, curve: Curves.easeOut));
-    _controller.forward();
     _loadTutorFeedback();
+
+    // Haptic feedback selon le score
+    Future.delayed(const Duration(milliseconds: 300), () {
+      if (_stars == 3) {
+        HapticFeedback.heavyImpact();
+      } else if (_stars >= 1) {
+        HapticFeedback.mediumImpact();
+      }
+    });
   }
 
   Future<void> _loadTutorFeedback() async {
-    try {
-      final feedback = await Api.tutorFeedback(widget.sessionId);
-      if (mounted)
-        setState(() {
-          _tutorFeedback = feedback;
-          _loadingFeedback = false;
-        });
-    } catch (e) {
-      if (mounted)
-        setState(() {
-          _tutorFeedback = 'Impossible de charger le feedback du tuteur.';
-          _loadingFeedback = false;
-        });
+    const maxAttempts = 14; // ~21s
+    for (var attempt = 0; attempt < maxAttempts; attempt++) {
+      if (!mounted) return;
+      try {
+        final session = await Api.getSession(widget.sessionId);
+        final feedback = (session['feedback'] ?? '').toString();
+        if (feedback.trim().isNotEmpty) {
+          if (!mounted) return;
+          setState(() {
+            _tutorFeedback = feedback;
+            _loadingFeedback = false;
+          });
+          return;
+        }
+      } catch (_) {
+        // Ignore transient errors; we'll retry.
+      }
+
+      await Future.delayed(const Duration(milliseconds: 1500));
     }
+
+    if (!mounted) return;
+    setState(() {
+      _tutorFeedback =
+          'Feedback en cours de génération. Réessayez dans quelques secondes.';
+      _loadingFeedback = false;
+    });
   }
 
   @override
   void dispose() {
-    _controller.dispose();
     super.dispose();
   }
 
@@ -78,13 +96,11 @@ class _FeedbackScreenState extends State<FeedbackScreen>
       body: SafeArea(
         child: Column(
           children: [
-            _buildHeader(context),
+            _buildVictoryBanner(context),
             Expanded(
               child: ListView(
-                padding: const EdgeInsets.fromLTRB(20, 8, 20, 20),
+                padding: const EdgeInsets.fromLTRB(20, 20, 20, 20),
                 children: [
-                  _buildScoreCircle(),
-                  const SizedBox(height: 24),
                   _buildMetricCards(),
                   const SizedBox(height: 24),
                   if (widget.expectedDiagnosis != null &&
@@ -97,8 +113,6 @@ class _FeedbackScreenState extends State<FeedbackScreen>
                   ],
                   const SizedBox(height: 24),
                   _buildTutorAnalysis(),
-                  const SizedBox(height: 24),
-                  _buildQuickInsights(),
                   const SizedBox(height: 32),
                   _buildFinishButton(context),
                 ],
@@ -110,88 +124,109 @@ class _FeedbackScreenState extends State<FeedbackScreen>
     );
   }
 
-  Widget _buildHeader(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(20, 16, 20, 8),
-      child: Row(
+  Widget _buildVictoryBanner(BuildContext context) {
+    final stars = _stars;
+    final List<List<Color>> gradients = [
+      [const Color(0xFFEF4444), const Color(0xFFDC2626)], // 0 étoiles — rouge
+      [const Color(0xFF3B82F6), const Color(0xFF1D4ED8)], // 1 étoile  — bleu
+      [const Color(0xFF10B981), const Color(0xFF059669)], // 2 étoiles — vert
+      [const Color(0xFFF59E0B), const Color(0xFFD97706)], // 3 étoiles — or
+    ];
+    final msgs = ['À améliorer', 'Bien essayé !', 'Bien joué !', 'Excellent ! 🏆'];
+    final gradient = gradients[stars.clamp(0, 3)];
+    final msg = msgs[stars.clamp(0, 3)];
+
+    return Container(
+      width: double.infinity,
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          colors: gradient,
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+      ),
+      padding: const EdgeInsets.fromLTRB(20, 16, 20, 28),
+      child: Column(
         children: [
-          GestureDetector(
-            onTap: () => Navigator.of(context).pop(),
-            child: Container(
-              width: 38,
-              height: 38,
-              decoration: BoxDecoration(
-                color: const Color(0xFFF1F5F9),
-                borderRadius: BorderRadius.circular(10),
-              ),
-              child: const Icon(
-                LucideIcons.x,
-                size: 20,
-                color: Color(0xFF64748B),
+          // Bouton fermer
+          Align(
+            alignment: Alignment.topRight,
+            child: GestureDetector(
+              onTap: () => widget.popToRootOnFinish
+                  ? Navigator.of(context).popUntil((r) => r.isFirst)
+                  : Navigator.of(context).pop(true),
+              child: Container(
+                width: 34,
+                height: 34,
+                decoration: BoxDecoration(
+                  color: Colors.white.withValues(alpha: 0.2),
+                  shape: BoxShape.circle,
+                ),
+                child: const Icon(LucideIcons.x, size: 18, color: Colors.white),
               ),
             ),
           ),
-          const SizedBox(width: 16),
+          const SizedBox(height: 8),
+
+          // Score
           Text(
-            'Feedback Summary',
+            '${widget.score}/20',
             style: GoogleFonts.outfit(
-              fontSize: 20,
-              fontWeight: FontWeight.w800,
-              color: const Color(0xFF1E293B),
+              fontSize: 56,
+              fontWeight: FontWeight.w900,
+              color: Colors.white,
+              height: 1,
             ),
+          ).animate().scale(
+            begin: const Offset(0.5, 0.5),
+            end: const Offset(1, 1),
+            duration: 500.ms,
+            curve: Curves.elasticOut,
+          ),
+
+          const SizedBox(height: 6),
+          Text(
+            msg,
+            style: GoogleFonts.outfit(
+              fontSize: 18,
+              fontWeight: FontWeight.w700,
+              color: Colors.white.withValues(alpha: 0.9),
+            ),
+          ).animate().fadeIn(delay: 300.ms, duration: 400.ms),
+
+          const SizedBox(height: 20),
+
+          // Étoiles animées
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: List.generate(3, (i) {
+              final filled = i < stars;
+              return Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 8),
+                child: Icon(
+                  filled ? Icons.star_rounded : Icons.star_outline_rounded,
+                  size: 48,
+                  color: filled ? const Color(0xFFFDE68A) : Colors.white.withValues(alpha: 0.3),
+                ).animate(delay: Duration(milliseconds: 400 + i * 200))
+                  .scale(
+                    begin: const Offset(0, 0),
+                    end: const Offset(1, 1),
+                    duration: 400.ms,
+                    curve: Curves.elasticOut,
+                  )
+                  .then()
+                  .shimmer(
+                    duration: 800.ms,
+                    color: filled ? Colors.white : Colors.transparent,
+                  ),
+              );
+            }),
           ),
         ],
       ),
     );
   }
 
-  Widget _buildScoreCircle() {
-    return Center(
-      child: AnimatedBuilder(
-        animation: _progressAnimation,
-        builder: (context, child) {
-          return SizedBox(
-            width: 190,
-            height: 190,
-            child: CustomPaint(
-              painter: _ScoreRingPainter(
-                progress: _progressAnimation.value,
-                trackColor: const Color(0xFFE2E8F0),
-                progressColor: AppColors.primary,
-                strokeWidth: 14,
-              ),
-              child: Center(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text(
-                      '${widget.score}/20',
-                      style: GoogleFonts.outfit(
-                        fontSize: 48,
-                        fontWeight: FontWeight.w900,
-                        color: const Color(0xFF1E293B),
-                        height: 1,
-                      ),
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      'SCORE',
-                      style: GoogleFonts.outfit(
-                        fontSize: 11,
-                        fontWeight: FontWeight.w900,
-                        color: AppColors.primary,
-                        letterSpacing: 1.2,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          );
-        },
-      ),
-    );
-  }
 
   Widget _buildMetricCards() {
     final s = widget.score;
@@ -241,7 +276,7 @@ class _FeedbackScreenState extends State<FeedbackScreen>
                   borderRadius: BorderRadius.circular(16),
                   boxShadow: [
                     BoxShadow(
-                      color: Colors.black.withOpacity(0.04),
+                      color: Colors.black.withValues(alpha: 0.04),
                       blurRadius: 8,
                       offset: const Offset(0, 2),
                     ),
@@ -252,7 +287,7 @@ class _FeedbackScreenState extends State<FeedbackScreen>
                     Container(
                       padding: const EdgeInsets.all(8),
                       decoration: BoxDecoration(
-                        color: color.withOpacity(0.1),
+                        color: color.withValues(alpha: 0.1),
                         borderRadius: BorderRadius.circular(10),
                       ),
                       child: Icon(
@@ -296,7 +331,7 @@ class _FeedbackScreenState extends State<FeedbackScreen>
         borderRadius: BorderRadius.circular(20),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.04),
+            color: Colors.black.withValues(alpha: 0.04),
             blurRadius: 12,
             offset: const Offset(0, 4),
           ),
@@ -312,7 +347,7 @@ class _FeedbackScreenState extends State<FeedbackScreen>
                 height: 48,
                 decoration: BoxDecoration(
                   shape: BoxShape.circle,
-                  color: AppColors.primary.withOpacity(0.1),
+                  color: AppColors.primary.withValues(alpha: 0.1),
                 ),
                 child: const Icon(
                   LucideIcons.graduationCap,
@@ -325,7 +360,7 @@ class _FeedbackScreenState extends State<FeedbackScreen>
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    'Tutor Analysis',
+                    'Analyse du Tuteur',
                     style: GoogleFonts.outfit(
                       fontSize: 17,
                       fontWeight: FontWeight.w800,
@@ -333,7 +368,7 @@ class _FeedbackScreenState extends State<FeedbackScreen>
                     ),
                   ),
                   Text(
-                    'Dr. Julian Vance • AI Clinical Lead',
+                    'Tuteur IA • Pédagogie Clinique',
                     style: GoogleFonts.outfit(
                       fontSize: 12,
                       fontWeight: FontWeight.w500,
@@ -369,7 +404,7 @@ class _FeedbackScreenState extends State<FeedbackScreen>
         borderRadius: BorderRadius.circular(20),
         boxShadow: [
           BoxShadow(
-            color: const Color(0xFF0F172A).withOpacity(0.06),
+            color: const Color(0xFF0F172A).withValues(alpha: 0.06),
             blurRadius: 12,
             offset: const Offset(0, 4),
           ),
@@ -385,7 +420,7 @@ class _FeedbackScreenState extends State<FeedbackScreen>
                 height: 42,
                 decoration: BoxDecoration(
                   shape: BoxShape.circle,
-                  color: const Color(0xFF6366F1).withOpacity(0.1),
+                  color: const Color(0xFF6366F1).withValues(alpha: 0.1),
                 ),
                 child: const Icon(
                   LucideIcons.stethoscope,
@@ -412,7 +447,7 @@ class _FeedbackScreenState extends State<FeedbackScreen>
               color: const Color(0xFFF0F0FF),
               borderRadius: BorderRadius.circular(12),
               border: Border.all(
-                color: const Color(0xFF6366F1).withOpacity(0.2),
+                color: const Color(0xFF6366F1).withValues(alpha: 0.2),
               ),
             ),
             child: Text(
@@ -439,7 +474,7 @@ class _FeedbackScreenState extends State<FeedbackScreen>
         borderRadius: BorderRadius.circular(20),
         boxShadow: [
           BoxShadow(
-            color: const Color(0xFF0F172A).withOpacity(0.06),
+            color: const Color(0xFF0F172A).withValues(alpha: 0.06),
             blurRadius: 12,
             offset: const Offset(0, 4),
           ),
@@ -455,7 +490,7 @@ class _FeedbackScreenState extends State<FeedbackScreen>
                 height: 42,
                 decoration: BoxDecoration(
                   shape: BoxShape.circle,
-                  color: const Color(0xFF10B981).withOpacity(0.1),
+                  color: const Color(0xFF10B981).withValues(alpha: 0.1),
                 ),
                 child: const Icon(
                   LucideIcons.pill,
@@ -484,7 +519,7 @@ class _FeedbackScreenState extends State<FeedbackScreen>
                 color: const Color(0xFFF0FDF4),
                 borderRadius: BorderRadius.circular(12),
                 border: Border.all(
-                  color: const Color(0xFF10B981).withOpacity(0.2),
+                  color: const Color(0xFF10B981).withValues(alpha: 0.2),
                 ),
               ),
               child: Column(
@@ -540,7 +575,7 @@ class _FeedbackScreenState extends State<FeedbackScreen>
                 color: const Color(0xFFFEF3C7),
                 borderRadius: BorderRadius.circular(10),
                 border: Border.all(
-                  color: const Color(0xFFFBBF24).withOpacity(0.3),
+                  color: const Color(0xFFFBBF24).withValues(alpha: 0.3),
                 ),
               ),
               child: Row(
@@ -604,115 +639,23 @@ class _FeedbackScreenState extends State<FeedbackScreen>
     );
   }
 
-  Widget _buildQuickInsights() {
-    final insights = [
-      {
-        'icon': LucideIcons.target,
-        'color': AppColors.primary,
-        'label': 'Treatment Accuracy',
-        'value': '92%',
-      },
-      {
-        'icon': LucideIcons.clock,
-        'color': const Color(0xFF22C55E),
-        'label': 'Response Time',
-        'value': '04:22s',
-      },
-    ];
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          'QUICK INSIGHTS',
-          style: GoogleFonts.outfit(
-            fontSize: 12,
-            fontWeight: FontWeight.w900,
-            color: AppColors.primary,
-            letterSpacing: 1.2,
-          ),
-        ),
-        const SizedBox(height: 12),
-        Container(
-          decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(16),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withOpacity(0.04),
-                blurRadius: 8,
-                offset: const Offset(0, 2),
-              ),
-            ],
-          ),
-          child: Column(
-            children:
-                insights.asMap().entries.map((entry) {
-                  final i = entry.value;
-                  final isLast = entry.key == insights.length - 1;
-                  return Column(
-                    children: [
-                      Padding(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 20,
-                          vertical: 14,
-                        ),
-                        child: Row(
-                          children: [
-                            Icon(
-                              i['icon'] as IconData,
-                              color: i['color'] as Color,
-                              size: 20,
-                            ),
-                            const SizedBox(width: 14),
-                            Expanded(
-                              child: Text(
-                                i['label'] as String,
-                                style: GoogleFonts.outfit(
-                                  fontSize: 14,
-                                  fontWeight: FontWeight.w600,
-                                  color: const Color(0xFF475569),
-                                ),
-                              ),
-                            ),
-                            Text(
-                              i['value'] as String,
-                              style: GoogleFonts.outfit(
-                                fontSize: 15,
-                                fontWeight: FontWeight.w800,
-                                color: const Color(0xFF1E293B),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                      if (!isLast)
-                        const Divider(
-                          height: 1,
-                          indent: 20,
-                          endIndent: 20,
-                          color: Color(0xFFF1F5F9),
-                        ),
-                    ],
-                  );
-                }).toList(),
-          ),
-        ),
-      ],
-    );
-  }
-
   Widget _buildFinishButton(BuildContext context) {
     return SizedBox(
       width: double.infinity,
       height: 56,
       child: ElevatedButton.icon(
         onPressed: () {
-          // Pop all the way back to main screen
-          Navigator.of(context).popUntil((route) => route.isFirst);
+          if (widget.popToRootOnFinish) {
+            // Existing behavior (exam mode): return to main screen.
+            Navigator.of(context).popUntil((route) => route.isFirst);
+          } else {
+            // Case mode: bubble up a completion result.
+            Navigator.of(context).pop(true);
+          }
         },
         icon: const Icon(LucideIcons.logOut, size: 20),
         label: Text(
-          'Finish Session',
+          'Terminer la session',
           style: GoogleFonts.outfit(fontWeight: FontWeight.w800, fontSize: 17),
         ),
         style: ElevatedButton.styleFrom(
@@ -728,52 +671,3 @@ class _FeedbackScreenState extends State<FeedbackScreen>
   }
 }
 
-class _ScoreRingPainter extends CustomPainter {
-  final double progress;
-  final Color trackColor;
-  final Color progressColor;
-  final double strokeWidth;
-
-  _ScoreRingPainter({
-    required this.progress,
-    required this.trackColor,
-    required this.progressColor,
-    required this.strokeWidth,
-  });
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final center = Offset(size.width / 2, size.height / 2);
-    final radius = (size.width - strokeWidth) / 2;
-
-    // Track
-    canvas.drawArc(
-      Rect.fromCircle(center: center, radius: radius),
-      0,
-      2 * pi,
-      false,
-      Paint()
-        ..color = trackColor
-        ..strokeWidth = strokeWidth
-        ..style = PaintingStyle.stroke
-        ..strokeCap = StrokeCap.round,
-    );
-
-    // Progress
-    canvas.drawArc(
-      Rect.fromCircle(center: center, radius: radius),
-      -pi / 2,
-      2 * pi * progress,
-      false,
-      Paint()
-        ..color = progressColor
-        ..strokeWidth = strokeWidth
-        ..style = PaintingStyle.stroke
-        ..strokeCap = StrokeCap.round,
-    );
-  }
-
-  @override
-  bool shouldRepaint(_ScoreRingPainter oldDelegate) =>
-      oldDelegate.progress != progress;
-}

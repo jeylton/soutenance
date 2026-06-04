@@ -20,6 +20,81 @@ class _StatsScreenState extends State<StatsScreen> {
   Map<String, dynamic> _gamification = {};
   bool _loading = true;
 
+  int _toInt(dynamic value, {int fallback = 0}) {
+    if (value is int) return value;
+    if (value is num) return value.toInt();
+    return int.tryParse(value?.toString() ?? '') ?? fallback;
+  }
+
+  int _starsFromCaseScore(double score20) {
+    final clamped = score20.clamp(0.0, 20.0);
+    if (clamped >= 17) return 3;
+    if (clamped >= 12) return 2;
+    if (clamped > 0) return 1;
+    return 0;
+  }
+
+  int _starsFromQuizAccuracy(double accuracy) {
+    final clamped = accuracy.clamp(0.0, 1.0);
+    if (clamped <= 0) return 0;
+    if (clamped >= 0.85) return 3;
+    if (clamped >= 0.60) return 2;
+    return 1;
+  }
+
+  int _computeCaseTrophies(List<dynamic> sessions) {
+    final completed = sessions.whereType<Map>().toList();
+    final Map<int, double> bestScoreByCaseId = {};
+    for (final row in completed) {
+      final s = Map<String, dynamic>.from(row);
+      final caseId = _toInt(s['case_id'], fallback: -1);
+      if (caseId <= 0) continue;
+      final score = (s['score'] is num) ? (s['score'] as num).toDouble() : 0.0;
+      final prev = bestScoreByCaseId[caseId];
+      if (prev == null || score > prev) bestScoreByCaseId[caseId] = score;
+    }
+    int trophies = 0;
+    for (final score in bestScoreByCaseId.values) {
+      trophies += _starsFromCaseScore(score);
+    }
+    return trophies;
+  }
+
+  int _computeQuizTrophies(List<dynamic> attempts) {
+    final Map<String, int> bestStarsByQuizKey = {};
+    for (final row in attempts) {
+      if (row is! Map) continue;
+      final a = Map<String, dynamic>.from(row);
+      final quizKey = (a['quiz_key'] ?? '').toString().trim();
+      if (quizKey.isEmpty) continue;
+
+      double accuracy = 0.0;
+      final accRaw = a['accuracy'];
+      if (accRaw is num) {
+        accuracy = accRaw.toDouble();
+      } else {
+        final parsed = double.tryParse(accRaw?.toString() ?? '');
+        if (parsed != null) accuracy = parsed;
+      }
+
+      if (accuracy <= 0) {
+        final good = _toInt(a['score']);
+        final total = _toInt(a['total']);
+        if (total > 0) accuracy = good / total;
+      }
+
+      final stars = _starsFromQuizAccuracy(accuracy);
+      final prev = bestStarsByQuizKey[quizKey] ?? 0;
+      if (stars > prev) bestStarsByQuizKey[quizKey] = stars;
+    }
+
+    int trophies = 0;
+    for (final v in bestStarsByQuizKey.values) {
+      trophies += v;
+    }
+    return trophies;
+  }
+
   @override
   void initState() {
     super.initState();
@@ -59,36 +134,46 @@ class _StatsScreenState extends State<StatsScreen> {
       0,
       (sum, s) => sum + ((s['score'] ?? 0) as num).toDouble(),
     );
-    final quizBonus = _quizAttempts.fold<double>(
-      0,
-      (sum, a) =>
-          sum +
-          (((a as Map<String, dynamic>)['points_earned'] ?? 0) as num)
-              .toDouble(),
-    );
-    final globalScore = totalScore + quizBonus;
     final avgScore =
         completed.isNotEmpty ? (totalScore / completed.length) : 0.0;
-    final quizAvgPercent =
+
+    double quizAccuracyOf(dynamic row) {
+      if (row is! Map) return 0.0;
+      final a = Map<String, dynamic>.from(row);
+      final accRaw = a['accuracy'];
+      if (accRaw is num) return accRaw.toDouble().clamp(0.0, 1.0);
+      final parsed = double.tryParse(accRaw?.toString() ?? '');
+      if (parsed != null) return parsed.clamp(0.0, 1.0);
+
+      final good = _toInt(a['score']);
+      final total = _toInt(a['total']);
+      if (total <= 0) return 0.0;
+      return (good / total).clamp(0.0, 1.0);
+    }
+
+    final quizAvgAccuracy =
         _quizAttempts.isEmpty
             ? 0.0
             : _quizAttempts.fold<double>(
                   0,
-                  (sum, a) =>
-                      sum +
-                      ((((a as Map<String, dynamic>)['accuracy'] ?? 0) as num)
-                          .toDouble()),
+                  (sum, a) => sum + quizAccuracyOf(a),
                 ) /
                 _quizAttempts.length;
-    // ignore: unused_local_variable
-    final avgPercent = (avgScore * 5).round(); // score/20 → percentage
+
+    final caseAvgPercent =
+        completed.isNotEmpty ? (avgScore / 20.0 * 100.0) : 0.0;
+    final quizAvgPercent = quizAvgAccuracy * 100.0;
     final totalRuns = completed.length + _quizAttempts.length;
     final globalPercent =
         totalRuns == 0
             ? 0.0
-            : ((avgPercent.toDouble() * completed.length) +
+            : ((caseAvgPercent * completed.length) +
                     (quizAvgPercent * _quizAttempts.length)) /
                 totalRuns;
+
+    final caseTrophies = _computeCaseTrophies(completed);
+    final quizTrophies = _computeQuizTrophies(_quizAttempts);
+    final trophies = caseTrophies + quizTrophies;
 
     // last 5 sessions
     final last5 = completed.length > 5 ? completed.sublist(0, 5) : completed;
@@ -106,7 +191,7 @@ class _StatsScreenState extends State<StatsScreen> {
               children: [
                 const SizedBox(height: 20),
                 Text(
-                  'Tableau des Scores',
+                  'Tableau des Trophées',
                   style: GoogleFonts.outfit(
                     fontSize: 32,
                     fontWeight: FontWeight.w900,
@@ -137,7 +222,7 @@ class _StatsScreenState extends State<StatsScreen> {
                       borderRadius: BorderRadius.circular(30),
                       boxShadow: [
                         BoxShadow(
-                          color: AppColors.primary.withOpacity(0.3),
+                          color: AppColors.primary.withValues(alpha: 0.3),
                           blurRadius: 25,
                           offset: const Offset(0, 12),
                         ),
@@ -154,7 +239,7 @@ class _StatsScreenState extends State<StatsScreen> {
                                 style: GoogleFonts.outfit(
                                   fontSize: 12,
                                   fontWeight: FontWeight.w900,
-                                  color: Colors.white.withOpacity(0.8),
+                                  color: Colors.white.withValues(alpha: 0.8),
                                   letterSpacing: 1.5,
                                 ),
                               ),
@@ -178,7 +263,7 @@ class _StatsScreenState extends State<StatsScreen> {
                                     style: GoogleFonts.outfit(
                                       fontSize: 20,
                                       fontWeight: FontWeight.w700,
-                                      color: Colors.white.withOpacity(0.6),
+                                      color: Colors.white.withValues(alpha: 0.6),
                                     ),
                                   ),
                                 ],
@@ -189,24 +274,24 @@ class _StatsScreenState extends State<StatsScreen> {
                         Container(
                           height: 60,
                           width: 1,
-                          color: Colors.white.withOpacity(0.2),
+                          color: Colors.white.withValues(alpha: 0.2),
                         ),
                         Expanded(
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.center,
                             children: [
                               Text(
-                                'POINTS TOTAUX',
+                                'TROPHÉES',
                                 style: GoogleFonts.outfit(
                                   fontSize: 12,
                                   fontWeight: FontWeight.w900,
-                                  color: Colors.white.withOpacity(0.8),
+                                  color: Colors.white.withValues(alpha: 0.8),
                                   letterSpacing: 1.5,
                                 ),
                               ),
                               const SizedBox(height: 12),
                               Text(
-                                '${globalScore.round()}',
+                                '$trophies',
                                 style: GoogleFonts.outfit(
                                   fontSize: 48,
                                   fontWeight: FontWeight.w900,
@@ -220,24 +305,6 @@ class _StatsScreenState extends State<StatsScreen> {
                     ),
                   ),
                   const SizedBox(height: 14),
-                  Wrap(
-                    spacing: 10,
-                    runSpacing: 10,
-                    children: [
-                      _buildKpiChip(
-                        'Cas: ${completed.length}',
-                        LucideIcons.stethoscope,
-                      ),
-                      _buildKpiChip(
-                        'Quiz: ${_quizAttempts.length}',
-                        LucideIcons.graduationCap,
-                      ),
-                      _buildKpiChip(
-                        'Bonus quiz: ${quizBonus.round()}',
-                        LucideIcons.sparkles,
-                      ),
-                    ],
-                  ),
                   const SizedBox(height: 48),
 
                   // Progression
@@ -359,7 +426,7 @@ class _StatsScreenState extends State<StatsScreen> {
                               width: 56,
                               height: 56,
                               decoration: BoxDecoration(
-                                color: AppColors.primary.withOpacity(0.1),
+                                color: AppColors.primary.withValues(alpha: 0.1),
                                 borderRadius: BorderRadius.circular(16),
                               ),
                               child: Center(
@@ -625,7 +692,7 @@ class _StatsScreenState extends State<StatsScreen> {
                                     borderRadius: BorderRadius.circular(12),
                                   ),
                                   child: Text(
-                                    '${u['xp'] ?? 0} XP',
+                                    '${u['trophies'] ?? 0} 🏆',
                                     style: GoogleFonts.outfit(
                                       fontSize: 14,
                                       fontWeight: FontWeight.w800,
@@ -706,6 +773,7 @@ class _StatsScreenState extends State<StatsScreen> {
             ? '🥈'
             : '🥉';
     final xp = u['xp'] ?? 0;
+    final trophies = u['trophies'] ?? 0;
 
     return Column(
       mainAxisSize: MainAxisSize.min,
@@ -716,13 +784,13 @@ class _StatsScreenState extends State<StatsScreen> {
           width: 40,
           height: 40,
           decoration: BoxDecoration(
-            color: Colors.white.withOpacity(0.2),
+            color: Colors.white.withValues(alpha: 0.2),
             shape: BoxShape.circle,
             border: Border.all(
               color:
                   rank == 1
                       ? const Color(0xFFFFD700)
-                      : Colors.white.withOpacity(0.4),
+                      : Colors.white.withValues(alpha: 0.4),
               width: rank == 1 ? 2 : 1,
             ),
           ),
@@ -753,11 +821,11 @@ class _StatsScreenState extends State<StatsScreen> {
           ),
         ),
         Text(
-          '$xp XP',
+          '$trophies 🏆',
           style: GoogleFonts.outfit(
             fontSize: 10,
             fontWeight: FontWeight.w600,
-            color: Colors.white.withOpacity(0.7),
+            color: Colors.white.withValues(alpha: 0.7),
           ),
         ),
         const SizedBox(height: 6),
@@ -766,7 +834,7 @@ class _StatsScreenState extends State<StatsScreen> {
           width: 56,
           height: height,
           decoration: BoxDecoration(
-            color: Colors.white.withOpacity(rank == 1 ? 0.25 : 0.15),
+            color: Colors.white.withValues(alpha: rank == 1 ? 0.25 : 0.15),
             borderRadius: const BorderRadius.vertical(top: Radius.circular(8)),
           ),
           child: Center(
@@ -775,7 +843,7 @@ class _StatsScreenState extends State<StatsScreen> {
               style: GoogleFonts.outfit(
                 fontSize: 16,
                 fontWeight: FontWeight.w900,
-                color: Colors.white.withOpacity(0.6),
+                color: Colors.white.withValues(alpha: 0.6),
               ),
             ),
           ),
@@ -801,7 +869,7 @@ class _StatsScreenState extends State<StatsScreen> {
           width: 8,
           height: percent * 0.8,
           decoration: BoxDecoration(
-            color: AppColors.primary.withOpacity(isLatest ? 1.0 : 0.1),
+            color: AppColors.primary.withValues(alpha: isLatest ? 1.0 : 0.1),
             borderRadius: BorderRadius.circular(4),
           ),
         ),
@@ -839,7 +907,7 @@ class _StatsScreenState extends State<StatsScreen> {
             width: 48,
             height: 48,
             decoration: BoxDecoration(
-              color: statusColor.withOpacity(0.1),
+              color: statusColor.withValues(alpha: 0.1),
               borderRadius: BorderRadius.circular(14),
             ),
             child: Icon(statusIcon, color: statusColor, size: 22),

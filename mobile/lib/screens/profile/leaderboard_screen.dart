@@ -55,8 +55,8 @@ class _LeaderboardScreenState extends State<LeaderboardScreen> {
               .toList();
 
       rows.sort((a, b) {
-        final xa = _toInt(a['xp']);
-        final xb = _toInt(b['xp']);
+        final xa = _toInt(a['trophies']);
+        final xb = _toInt(b['trophies']);
         return xb.compareTo(xa);
       });
 
@@ -156,7 +156,7 @@ class _LeaderboardScreenState extends State<LeaderboardScreen> {
                       final rank = entry.key + 1;
                       final user = entry.value;
                       final name = _nameFrom(user);
-                      final xp = _toInt(user['xp']);
+                      final trophies = _toInt(user['trophies']);
                       final level = _toInt(user['level'], fallback: 1);
                       final userId =
                           (user['user_id'] ?? user['id'])?.toString();
@@ -180,13 +180,13 @@ class _LeaderboardScreenState extends State<LeaderboardScreen> {
                         decoration: BoxDecoration(
                           color:
                               isMe
-                                  ? AppColors.primary.withOpacity(0.08)
+                                  ? AppColors.primary.withValues(alpha: 0.08)
                                   : Colors.white,
                           borderRadius: BorderRadius.circular(16),
                           border: Border.all(
                             color:
                                 isMe
-                                    ? AppColors.primary.withOpacity(0.35)
+                                    ? AppColors.primary.withValues(alpha: 0.35)
                                     : AppColors.border,
                             width: isMe ? 2 : 1,
                           ),
@@ -296,7 +296,7 @@ class _LeaderboardScreenState extends State<LeaderboardScreen> {
                                 borderRadius: BorderRadius.circular(12),
                               ),
                               child: Text(
-                                '$xp XP',
+                                '$trophies 🏆',
                                 style: GoogleFonts.outfit(
                                   fontSize: 13,
                                   fontWeight: FontWeight.w800,
@@ -320,7 +320,7 @@ class _LeaderboardScreenState extends State<LeaderboardScreen> {
     Widget podiumItem(int index, double height, String medal) {
       final user = _leaderboard[index];
       final name = _nameFrom(user);
-      final xp = _toInt(user['xp']);
+      final trophies = _toInt(user['trophies']);
 
       return Column(
         mainAxisAlignment: MainAxisAlignment.end,
@@ -333,7 +333,7 @@ class _LeaderboardScreenState extends State<LeaderboardScreen> {
             decoration: BoxDecoration(
               color: Colors.white,
               shape: BoxShape.circle,
-              border: Border.all(color: AppColors.primary.withOpacity(0.2)),
+              border: Border.all(color: AppColors.primary.withValues(alpha: 0.2)),
             ),
             child: Center(
               child: Text(
@@ -362,7 +362,7 @@ class _LeaderboardScreenState extends State<LeaderboardScreen> {
           ),
           const SizedBox(height: 4),
           Text(
-            '$xp XP',
+            '$trophies 🏆',
             style: GoogleFonts.outfit(
               fontSize: 11,
               fontWeight: FontWeight.w800,
@@ -374,11 +374,11 @@ class _LeaderboardScreenState extends State<LeaderboardScreen> {
             width: 88,
             height: height,
             decoration: BoxDecoration(
-              color: AppColors.primary.withOpacity(0.15),
+              color: AppColors.primary.withValues(alpha: 0.15),
               borderRadius: const BorderRadius.vertical(
                 top: Radius.circular(14),
               ),
-              border: Border.all(color: AppColors.primary.withOpacity(0.25)),
+              border: Border.all(color: AppColors.primary.withValues(alpha: 0.25)),
             ),
           ),
         ],

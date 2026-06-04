@@ -13,13 +13,19 @@ import Analytics from './components/dashboard/Analytics';
 import Settings from './components/dashboard/Settings';
 import CaseDetail from './components/dashboard/CaseDetail';
 import Feedback from './components/dashboard/Feedback';
-import ExamManagement from './components/dashboard/ExamManagement';
-import ExamResults from './components/dashboard/ExamResults';
 
 export const AuthContext = createContext(null);
 
 function App() {
-    const apiBase = (import.meta.env.VITE_API_URL || 'http://localhost:5000').trim().replace(/\/+$/, '');
+    const apiBase = (() => {
+        const env = String(import.meta.env.VITE_API_URL || '').trim().replace(/\/+$/, '');
+        if (env) return env;
+        const hostname = typeof window !== 'undefined' ? String(window.location?.hostname || '') : '';
+        const protocol = typeof window !== 'undefined' ? String(window.location?.protocol || '') : '';
+        if (hostname === 'localhost' || hostname === '127.0.0.1') return 'http://127.0.0.1:5000';
+        if (protocol === 'file:') return 'http://127.0.0.1:5000';
+        return typeof window !== 'undefined' ? String(window.location.origin || '').replace(/\/+$/, '') : '';
+    })();
     const [token, setToken] = useState(() => localStorage.getItem('dica_token'));
     const [adminUser, setAdminUser] = useState(() => {
         try { return JSON.parse(localStorage.getItem('dica_user')); } catch { return null; }
@@ -28,6 +34,9 @@ function App() {
     const [activeTab, setActiveTab] = useState('dashboard');
     const [selectedCaseId, setSelectedCaseId] = useState(null);
     const [editCaseData, setEditCaseData] = useState(null);
+    const [createCasePresetSpecialtyId, setCreateCasePresetSpecialtyId] = useState(null);
+    const [createCasePresetSeason, setCreateCasePresetSeason] = useState(null);
+    const [createCasePresetEpisode, setCreateCasePresetEpisode] = useState(null);
 
     // Validate stored token on mount — redirect to login if invalid/expired
     useEffect(() => {
@@ -88,8 +97,6 @@ function App() {
             case 'analytics': return "Analytique";
             case 'case-detail': return "Détail du Cas";
             case 'feedback': return "Feedback Tuteur";
-            case 'exams': return "Gestion des Examens";
-            case 'exam-results': return "Résultats d'Examens";
             case 'settings': return "Paramètres";
             default: return "Administration";
         }
@@ -111,7 +118,7 @@ function App() {
         <AuthContext.Provider value={{ token, authHeaders, adminUser, handleLogout }}>
         <div className="flex h-screen overflow-hidden bg-[#050C0A] text-slate-200 select-none">
             <Sidebar
-                activeTab={activeTab === 'create-case' || activeTab === 'edit-case' ? 'cases' : activeTab === 'exam-results' ? 'exams' : activeTab}
+                activeTab={activeTab === 'create-case' || activeTab === 'edit-case' ? 'cases' : activeTab}
                 onTabChange={(tab) => setActiveTab(tab)}
                 onLogout={handleLogout}
             />
@@ -140,16 +147,51 @@ function App() {
                 <div className={`${(activeTab === 'create-case' || activeTab === 'edit-case') ? 'p-0' : 'p-12'} flex-1 relative max-w-[1600px] w-full mx-auto`}>
                     {activeTab === 'dashboard' && <Overview />}
                     {activeTab === 'users' && <UserManagement />}
-                    {activeTab === 'cases' && <CaseManagement onCreateNew={() => setActiveTab('create-case')} onViewCase={(id) => { setSelectedCaseId(id); setActiveTab('case-detail'); }} onEditCase={(caseData) => { setEditCaseData(caseData); setActiveTab('edit-case'); }} />}
-                    {activeTab === 'create-case' && <CreateCase onBack={() => setActiveTab('cases')} />}
-                    {activeTab === 'edit-case' && <CreateCase onBack={() => { setEditCaseData(null); setActiveTab('cases'); }} editData={editCaseData} />}
+                    {activeTab === 'cases' && (
+                        <CaseManagement
+                            onCreateNew={(specialtyId, season, episode) => {
+                                setCreateCasePresetSpecialtyId(specialtyId ?? null);
+                                setCreateCasePresetSeason(season ?? null);
+                                setCreateCasePresetEpisode(episode ?? null);
+                                setActiveTab('create-case');
+                            }}
+                            onViewCase={(id) => {
+                                setSelectedCaseId(id);
+                                setActiveTab('case-detail');
+                            }}
+                            onEditCase={(caseData) => {
+                                setEditCaseData(caseData);
+                                setActiveTab('edit-case');
+                            }}
+                        />
+                    )}
+                    {activeTab === 'create-case' && (
+                        <CreateCase
+                            onBack={() => {
+                                setCreateCasePresetSpecialtyId(null);
+                                setCreateCasePresetSeason(null);
+                                setCreateCasePresetEpisode(null);
+                                setActiveTab('cases');
+                            }}
+                            presetSpecialtyId={createCasePresetSpecialtyId}
+                            presetSeason={createCasePresetSeason}
+                            presetEpisode={createCasePresetEpisode}
+                        />
+                    )}
+                    {activeTab === 'edit-case' && (
+                        <CreateCase
+                            onBack={() => {
+                                setEditCaseData(null);
+                                setActiveTab('cases');
+                            }}
+                            editData={editCaseData}
+                        />
+                    )}
                     {activeTab === 'case-detail' && <CaseDetail caseId={selectedCaseId} onBack={() => setActiveTab('cases')} />}
                     {activeTab === 'courses' && <QuizManagement />}
                     {activeTab === 'analytics' && <Analytics />}
                     {activeTab === 'settings' && <Settings token={token} />}
                     {activeTab === 'feedback' && <Feedback onBack={() => setActiveTab('dashboard')} />}
-                    {activeTab === 'exams' && <ExamManagement onViewResults={() => setActiveTab('exam-results')} />}
-                    {activeTab === 'exam-results' && <ExamResults onBack={() => setActiveTab('exams')} />}
                 </div>
             </main>
         </div>

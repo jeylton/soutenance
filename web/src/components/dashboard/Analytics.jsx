@@ -91,9 +91,21 @@ const Analytics = () => {
         return `${m}m${s2 > 0 ? ` ${s2}s` : ''}`;
     };
 
-    // Exam sessions vs practice
-    const examSessions = sessions.filter(s => s.is_exam);
-    const practiceSessions = sessions.filter(s => !s.is_exam);
+    // Top cas les plus difficiles (taux de réussite le plus bas)
+    const caseStatsMap = {};
+    completedSessions.forEach(s => {
+        if (!s.case_id) return;
+        const key = s.case_id;
+        if (!caseStatsMap[key]) caseStatsMap[key] = { name: s.cases?.consultation_reason || `Cas #${key}`, total: 0, passed: 0, count: 0 };
+        caseStatsMap[key].total += s.score || 0;
+        caseStatsMap[key].count += 1;
+        if ((s.score || 0) >= 10) caseStatsMap[key].passed += 1;
+    });
+    const hardestCasesAnalytics = Object.values(caseStatsMap)
+        .filter(c => c.count >= 2)
+        .map(c => ({ ...c, avg: (c.total / c.count).toFixed(1), passRate: Math.round((c.passed / c.count) * 100) }))
+        .sort((a, b) => a.avg - b.avg)
+        .slice(0, 5);
 
     // Build student list from sessions (group by user)
     const studentMap = {};
@@ -120,7 +132,7 @@ const Analytics = () => {
                 <AnalyticStat label="Score Moyen" value={avgScore === '—' ? '—' : `${avgScore}/20`} sub={completedSessions.length > 0 ? `${completedSessions.length} éval.` : null} icon={GraduationCap} color="#00C88C" />
                 <AnalyticStat label="Taux de Réussite" value={passRate} sub={passRate !== '—' ? '≥10/20' : null} icon={CheckCircle2} color="#00C88C" />
                 <AnalyticStat label="Temps Moyen" value={formatTime(avgTime)} sub={sessionsWithTime.length > 0 ? `${sessionsWithTime.length} sessions` : null} icon={Clock} color="#3B82F6" />
-                <AnalyticStat label="Sessions Totales" value={metrics?.total_sessions ?? '—'} sub={examSessions.length > 0 ? `${examSessions.length} examens` : null} icon={Zap} color="#A855F7" />
+                <AnalyticStat label="Sessions Totales" value={metrics?.total_sessions ?? '—'} sub={completedSessions.length > 0 ? `${completedSessions.length} éval.` : null} icon={Zap} color="#A855F7" />
             </div>
 
             {/* Tendency placeholder */}
@@ -153,20 +165,36 @@ const Analytics = () => {
             </div>
 
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-10">
-                {/* Specialties from metrics */}
-                <div className="stat-card p-10 space-y-10">
+                {/* Cas les plus difficiles */}
+                <div className="stat-card p-10 space-y-8">
                     <div className="flex items-center space-x-4">
-                        <div className="p-3 bg-[#11241E]/50 rounded-xl text-[#00C88C] border border-[#1A2E28]">
-                            <BarChart3 size={20} />
+                        <div className="p-3 bg-rose-500/10 rounded-xl text-rose-400 border border-rose-500/20">
+                            <Target size={20} />
                         </div>
-                        <h4 className="text-xl font-black text-white tracking-tight">Spécialités disponibles</h4>
+                        <div>
+                            <h4 className="text-xl font-black text-white tracking-tight">Cas les plus difficiles</h4>
+                            <p className="text-[10px] text-slate-500 font-bold uppercase tracking-widest">Taux de réussite le plus bas</p>
+                        </div>
                     </div>
-                    {(metrics?.specialty_list || []).length === 0 ? (
-                        <div className="text-sm text-slate-600 font-bold">Aucune spécialité enregistrée</div>
+                    {hardestCasesAnalytics.length === 0 ? (
+                        <div className="text-sm text-slate-600 font-bold">Pas encore assez de données (min. 2 sessions par cas)</div>
                     ) : (
-                        <div className="space-y-8">
-                            {(metrics?.specialty_list || []).map((sp, i) => (
-                                <ProgressBar key={i} label={sp.name} value="—" percentage="0%" />
+                        <div className="space-y-6">
+                            {hardestCasesAnalytics.map((c, i) => (
+                                <div key={i} className="space-y-2">
+                                    <div className="flex items-center justify-between">
+                                        <span className="text-sm font-bold text-white truncate max-w-[60%]">{c.name}</span>
+                                        <div className="flex items-center space-x-3">
+                                            <span className="text-[10px] font-black text-rose-400">{c.avg}/20</span>
+                                            <span className="text-[10px] font-bold text-slate-500">{c.passRate}% réussite</span>
+                                        </div>
+                                    </div>
+                                    <div className="h-2 bg-[#0D1B17] rounded-full overflow-hidden border border-[#1A2E28]">
+                                        <div className="h-full rounded-full transition-all duration-1000"
+                                            style={{ width: `${c.passRate}%`, backgroundColor: c.passRate < 40 ? '#ef4444' : c.passRate < 60 ? '#f59e0b' : '#22c55e' }} />
+                                    </div>
+                                    <p className="text-[9px] text-slate-600 font-bold">{c.count} tentatives</p>
+                                </div>
                             ))}
                         </div>
                     )}
