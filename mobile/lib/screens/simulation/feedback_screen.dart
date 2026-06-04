@@ -3,8 +3,10 @@ import 'package:flutter/services.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:lucide_icons/lucide_icons.dart';
+import 'package:provider/provider.dart';
 import '../../theme/app_theme.dart';
 import '../../services/api.dart';
+import '../../state/session_state.dart';
 
 class FeedbackScreen extends StatefulWidget {
   final int score;
@@ -89,8 +91,11 @@ class _FeedbackScreenState extends State<FeedbackScreen> {
 
     if (!mounted) return;
     setState(() {
-      _tutorFeedback =
-          'Feedback en cours de génération. Réessayez dans quelques secondes.';
+      _tutorFeedback = mounted
+          ? (Provider.of<SessionState>(context, listen: false).isFrench
+              ? 'Feedback en cours de génération. Réessayez dans quelques secondes.'
+              : 'Feedback is being generated. Try again in a few seconds.')
+          : 'Feedback en cours de génération. Réessayez dans quelques secondes.';
       _loadingFeedback = false;
     });
   }
@@ -136,14 +141,17 @@ class _FeedbackScreenState extends State<FeedbackScreen> {
   }
 
   Widget _buildVictoryBanner(BuildContext context) {
+    final isFr = Provider.of<SessionState>(context, listen: false).isFrench;
     final stars = _stars;
     final List<List<Color>> gradients = [
-      [const Color(0xFFEF4444), const Color(0xFFDC2626)], // 0 étoiles — rouge
-      [const Color(0xFF3B82F6), const Color(0xFF1D4ED8)], // 1 étoile  — bleu
-      [const Color(0xFF10B981), const Color(0xFF059669)], // 2 étoiles — vert
-      [const Color(0xFFF59E0B), const Color(0xFFD97706)], // 3 étoiles — or
+      [const Color(0xFFEF4444), const Color(0xFFDC2626)],
+      [const Color(0xFF3B82F6), const Color(0xFF1D4ED8)],
+      [const Color(0xFF10B981), const Color(0xFF059669)],
+      [const Color(0xFFF59E0B), const Color(0xFFD97706)],
     ];
-    final msgs = ['À améliorer', 'Bien essayé !', 'Bien joué !', 'Excellent ! 🏆'];
+    final msgs = isFr
+        ? ['À améliorer', 'Bien essayé !', 'Bien joué !', 'Excellent ! 🏆']
+        : ['Keep trying', 'Good effort!', 'Well done!', 'Excellent! 🏆'];
     final gradient = gradients[stars.clamp(0, 3)];
     final msg = msgs[stars.clamp(0, 3)];
 
@@ -240,29 +248,24 @@ class _FeedbackScreenState extends State<FeedbackScreen> {
 
 
   Widget _buildMetricCards() {
+    final isFr = Provider.of<SessionState>(context, listen: false).isFrench;
     final s = widget.score;
-    final diagLabel =
-        s >= 14
-            ? 'Excellent'
-            : s >= 10
-            ? 'Bon'
-            : 'À revoir';
-    final effLabel =
-        s >= 16
-            ? 'Optimal'
-            : s >= 10
-            ? 'Correct'
-            : 'Faible';
-    final commLabel = s >= 12 ? 'Bon' : 'Moyen';
+    final diagLabel = s >= 14
+        ? (isFr ? 'Excellent' : 'Excellent')
+        : s >= 10 ? (isFr ? 'Bon' : 'Good') : (isFr ? 'À revoir' : 'Needs work');
+    final effLabel = s >= 16
+        ? (isFr ? 'Optimal' : 'Optimal')
+        : s >= 10 ? (isFr ? 'Correct' : 'Correct') : (isFr ? 'Faible' : 'Weak');
+    final commLabel = s >= 12 ? (isFr ? 'Bon' : 'Good') : (isFr ? 'Moyen' : 'Average');
     final metrics = [
       {
-        'label': 'DIAGNOSTIC',
+        'label': isFr ? 'DIAGNOSTIC' : 'DIAGNOSIS',
         'value': diagLabel,
         'icon': LucideIcons.checkSquare,
         'color': s >= 14 ? const Color(0xFF22C55E) : const Color(0xFFF59E0B),
       },
       {
-        'label': 'EFFICACITÉ',
+        'label': isFr ? 'EFFICACITÉ' : 'EFFICIENCY',
         'value': effLabel,
         'icon': LucideIcons.zap,
         'color': AppColors.primary,
@@ -335,6 +338,7 @@ class _FeedbackScreenState extends State<FeedbackScreen> {
   }
 
   Widget _buildTutorAnalysis() {
+    final isFr = Provider.of<SessionState>(context, listen: false).isFrench;
     return Container(
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
@@ -371,7 +375,7 @@ class _FeedbackScreenState extends State<FeedbackScreen> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    'Analyse du Tuteur',
+                    isFr ? 'Analyse du Tuteur' : 'Tutor Analysis',
                     style: GoogleFonts.outfit(
                       fontSize: 17,
                       fontWeight: FontWeight.w800,
@@ -379,7 +383,7 @@ class _FeedbackScreenState extends State<FeedbackScreen> {
                     ),
                   ),
                   Text(
-                    'Tuteur IA • Pédagogie Clinique',
+                    isFr ? 'Tuteur IA • Pédagogie Clinique' : 'AI Tutor • Clinical Education',
                     style: GoogleFonts.outfit(
                       fontSize: 12,
                       fontWeight: FontWeight.w500,

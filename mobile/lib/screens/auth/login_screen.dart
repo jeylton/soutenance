@@ -192,6 +192,8 @@ class _LoginScreenState extends State<LoginScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final screenWidth = MediaQuery.of(context).size.width;
+    final hPad = screenWidth < 360 ? 20.0 : screenWidth < 480 ? 28.0 : 40.0;
     return Scaffold(
       body: Container(
         width: double.infinity,
@@ -204,7 +206,7 @@ class _LoginScreenState extends State<LoginScreen> {
         ),
         child: SafeArea(
           child: SingleChildScrollView(
-            padding: const EdgeInsets.symmetric(horizontal: 40, vertical: 20),
+            padding: EdgeInsets.symmetric(horizontal: hPad, vertical: 20),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.center,
               children: [

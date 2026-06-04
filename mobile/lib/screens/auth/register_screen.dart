@@ -99,7 +99,10 @@ class _RegisterScreenState extends State<RegisterScreen> {
       ),
       body: SafeArea(
         child: SingleChildScrollView(
-          padding: const EdgeInsets.symmetric(horizontal: 40, vertical: 20),
+          padding: EdgeInsets.symmetric(
+            horizontal: MediaQuery.of(context).size.width < 360 ? 20.0 : MediaQuery.of(context).size.width < 480 ? 28.0 : 40.0,
+            vertical: 20,
+          ),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.center,
             children: [

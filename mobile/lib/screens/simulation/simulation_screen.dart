@@ -1718,6 +1718,7 @@ class _SimulationScreenState extends State<SimulationScreen> {
   }
 
   void _openNotesSheet() {
+    final isFr = Provider.of<SessionState>(context, listen: false).isFrench;
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
@@ -1752,7 +1753,7 @@ class _SimulationScreenState extends State<SimulationScreen> {
                     Icon(LucideIcons.pencil, color: const Color(0xFFD97706), size: 22),
                     const SizedBox(width: 10),
                     Text(
-                      'Mes notes',
+                      isFr ? 'Mes notes' : 'My notes',
                       style: GoogleFonts.outfit(
                         fontSize: 20,
                         fontWeight: FontWeight.w900,
@@ -1789,7 +1790,7 @@ class _SimulationScreenState extends State<SimulationScreen> {
                     height: 1.7,
                   ),
                   decoration: InputDecoration(
-                    hintText: 'Hypothèses diagnostiques, examens à demander, signes importants...',
+                    hintText: isFr ? 'Hypothèses diagnostiques, examens à demander, signes importants...' : 'Diagnostic hypotheses, exams to order, key findings...',
                     hintStyle: GoogleFonts.outfit(
                       fontSize: 14,
                       color: const Color(0xFFCBD5E1),
@@ -1809,7 +1810,7 @@ class _SimulationScreenState extends State<SimulationScreen> {
               Container(
                 padding: const EdgeInsets.fromLTRB(20, 8, 20, 20),
                 child: Text(
-                  'Ces notes sont privées et ne seront pas soumises avec votre diagnostic.',
+                  isFr ? 'Ces notes sont privées et ne seront pas soumises avec votre diagnostic.' : 'These notes are private and will not be submitted with your diagnosis.',
                   textAlign: TextAlign.center,
                   style: GoogleFonts.outfit(
                     fontSize: 11,
@@ -1825,6 +1826,7 @@ class _SimulationScreenState extends State<SimulationScreen> {
   }
 
   Widget _buildBottomActions() {
+    final isFr = Provider.of<SessionState>(context, listen: false).isFrench;
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 24),
       child: Column(
@@ -1859,7 +1861,7 @@ class _SimulationScreenState extends State<SimulationScreen> {
                   ),
                   const SizedBox(width: 6),
                   Text(
-                    _hasNotes ? 'Notes (en cours)' : 'Ouvrir le bloc-notes',
+                    _hasNotes ? (isFr ? 'Notes (en cours)' : 'Notes (open)') : (isFr ? 'Ouvrir le bloc-notes' : 'Open notepad'),
                     style: GoogleFonts.outfit(
                       fontSize: 12,
                       fontWeight: FontWeight.w700,
@@ -1928,7 +1930,7 @@ class _SimulationScreenState extends State<SimulationScreen> {
                     ),
                     const SizedBox(width: 12),
                     Text(
-                      'Examens',
+                      isFr ? 'Examens' : 'Exams',
                       style: GoogleFonts.outfit(
                         fontSize: 16,
                         fontWeight: FontWeight.w800,
@@ -1968,7 +1970,7 @@ class _SimulationScreenState extends State<SimulationScreen> {
                     ),
                     const SizedBox(width: 12),
                     Text(
-                      'Diagnostic',
+                      isFr ? 'Diagnostic' : 'Diagnosis',
                       style: GoogleFonts.outfit(
                         fontSize: 16,
                         fontWeight: FontWeight.w800,

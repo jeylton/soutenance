@@ -53,6 +53,9 @@ class Api {
     if (_token != null) 'Authorization': 'Bearer $_token',
   };
 
+  // Timeout élevé pour le cold start Render (peut prendre jusqu'à 50s)
+  static const _authTimeout = Duration(seconds: 60);
+
   // ─── Auth ───
   static Future<Map<String, dynamic>> login(
     String email,
@@ -62,7 +65,7 @@ class Api {
       Uri.parse('$baseUrl/api/auth/login'),
       headers: {'Content-Type': 'application/json'},
       body: json.encode({'email': email, 'password': password}),
-    );
+    ).timeout(_authTimeout, onTimeout: () => throw Exception('Le serveur met du temps à répondre. Réessayez dans quelques secondes.'));
     final data = json.decode(res.body) as Map<String, dynamic>;
     if (res.statusCode >= 200 && res.statusCode < 300) {
       _token = data['token'] as String?;
@@ -109,7 +112,7 @@ class Api {
         'full_name': fullName,
         'profile_type': profileType,
       }),
-    );
+    ).timeout(_authTimeout, onTimeout: () => throw Exception('Le serveur met du temps à répondre. Réessayez dans quelques secondes.'));
     final data = json.decode(res.body) as Map<String, dynamic>;
     if (res.statusCode >= 200 && res.statusCode < 300) {
       _token = data['token'] as String?;

@@ -10,10 +10,11 @@ class UserProfileBar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final session = context.watch<SessionState>();
-    final hints = session.hintBalance;      // indices restants (remplace "vies")
+    final isFr = session.isFrench;
+    final hints = session.hintBalance;
     final streakDays = session.streak;
-    final topLabel = session.rankLabel;     // classement réel
-    final trophies = session.trophies;      // trophées réels
+    final topLabel = session.rankLabel;
+    final trophies = session.trophies;
 
     return Container(
       padding: const EdgeInsets.all(16),
@@ -33,15 +34,13 @@ class UserProfileBar extends StatelessWidget {
           Row(
             children: [
               _buildInfoPill(
-                icon: Icons.bolt,
-                iconColor: const Color(0xFFF59E0B),
-                label: 'Niveau',
-                value: '${session.level}',
+                emoji: '⭐',
+                label: isFr ? 'Étoiles' : 'Stars',
+                value: '$trophies',
               ),
               const SizedBox(width: 10),
               _buildInfoPill(
-                icon: Icons.auto_graph,
-                iconColor: const Color(0xFF0EA5E9),
+                emoji: '🪙',
                 label: 'XP',
                 value: '${session.xp}',
               ),
@@ -94,18 +93,24 @@ class UserProfileBar extends StatelessWidget {
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              _StreakChip(streakDays: streakDays),
-              _BadgeChip(
-                icon: Icons.stars_rounded,
-                text: 'Top $topLabel',
-                bgColor: const Color(0xFFEEF6FF),
-                fgColor: const Color(0xFF2B83F6),
+              Flexible(child: _StreakChip(streakDays: streakDays)),
+              const SizedBox(width: 6),
+              Flexible(
+                child: _BadgeChip(
+                  icon: Icons.stars_rounded,
+                  text: 'Top $topLabel',
+                  bgColor: const Color(0xFFEEF6FF),
+                  fgColor: const Color(0xFF2B83F6),
+                ),
               ),
-              _BadgeChip(
-                icon: Icons.lightbulb_rounded,
-                text: '$hints indice${hints > 1 ? 's' : ''}',
-                bgColor: const Color(0xFFFFF9EC),
-                fgColor: const Color(0xFFF59E0B),
+              const SizedBox(width: 6),
+              Flexible(
+                child: _BadgeChip(
+                  icon: Icons.lightbulb_rounded,
+                  text: '$hints 💡',
+                  bgColor: const Color(0xFFFFF9EC),
+                  fgColor: const Color(0xFFF59E0B),
+                ),
               ),
             ],
           ),
@@ -115,8 +120,9 @@ class UserProfileBar extends StatelessWidget {
   }
 
   Widget _buildInfoPill({
-    required IconData icon,
-    required Color iconColor,
+    String? emoji,
+    IconData? icon,
+    Color? iconColor,
     required String label,
     required String value,
   }) {
@@ -130,7 +136,10 @@ class UserProfileBar extends StatelessWidget {
         ),
         child: Row(
           children: [
-            Icon(icon, size: 17, color: iconColor),
+            if (emoji != null)
+              Text(emoji, style: const TextStyle(fontSize: 16))
+            else if (icon != null)
+              Icon(icon, size: 17, color: iconColor),
             const SizedBox(width: 6),
             Expanded(
               child: Column(
@@ -173,7 +182,11 @@ class _StreakChip extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final isHot = streakDays >= 3;
-    final label = streakDays == 0 ? 'Aucune série' : 'Série $streakDays j';
+    final session = context.watch<SessionState>();
+    final isFr = session.isFrench;
+    final label = streakDays == 0
+        ? (isFr ? 'Aucune série' : 'No streak')
+        : (isFr ? 'Série $streakDays j' : '$streakDays day streak');
 
     Widget chip = Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
