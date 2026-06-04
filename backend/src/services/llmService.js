@@ -584,8 +584,43 @@ const generateCase = async (specialtyName, difficulty, options = {}) => {
             .replace(/[\u0300-\u036f]/g, '')
             .trim();
 
+    // Aliases pour g\u00e9rer les noms de sp\u00e9cialit\u00e9 qui ne correspondent pas exactement aux cl\u00e9s
+    const specialtyAliases = {
+        'coeur': 'cardiologie',
+        'cardio': 'cardiologie',
+        'heart': 'cardiologie',
+        'cardiac': 'cardiologie',
+        'pulmo': 'pneumologie',
+        'poumon': 'pneumologie',
+        'lung': 'pneumologie',
+        'respiratory': 'pneumologie',
+        'pediatrie': 'pediatrie',
+        'pediat': 'pediatrie',
+        'enfant': 'pediatrie',
+        'gyneco': 'gynecologie',
+        'gynecologie': 'gynecologie',
+        'obstetrique': 'gynecologie',
+        'neuro': 'neurologie',
+        'cerveau': 'neurologie',
+        'nephro': 'nephrologie',
+        'rein': 'nephrologie',
+        'kidney': 'nephrologie',
+        'gastro': 'gastroenterologie',
+        'digestif': 'gastroenterologie',
+        'foie': 'gastroenterologie',
+        'endocrino': 'endocrinologie',
+        'diabete': 'endocrinologie',
+        'thyroide': 'endocrinologie',
+    };
+
     const specialtyKey = normalizeSpecialtyKey(specialtyName);
-    const matchedKey = Object.keys(specialtyDiseaseMatrix).find((k) => specialtyKey.includes(k)) || null;
+    // Chercher d'abord dans les aliases, puis par inclusion directe
+    const resolvedKey = specialtyAliases[specialtyKey]
+        || Object.entries(specialtyAliases).find(([alias]) => specialtyKey.includes(alias))?.[1]
+        || null;
+    const matchedKey = resolvedKey
+        || Object.keys(specialtyDiseaseMatrix).find((k) => specialtyKey.includes(k))
+        || null;
     const diseasePool = matchedKey ? specialtyDiseaseMatrix[matchedKey] : null;
 
     // Saison = Difficulté (1 étoile → s1, ..., 5 étoiles → s5)
