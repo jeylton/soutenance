@@ -108,7 +108,6 @@ const Overview = () => {
         <div className="animate-in fade-in duration-500 space-y-10">
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
                 <StatCard label="Total Utilisateurs (mobile)" value={String(metrics.mobile_users)} icon={Users} />
-                <StatCard label="Cours Publiés" value={String(metrics.published_courses)} icon={FileText} />
                 <StatCard label="Cas Cliniques Actifs" value={String(metrics.active_recent_cases)} icon={BookOpen} />
                 <StatCard label="Sessions" value={String(metrics.total_sessions)} icon={Activity} />
             </div>

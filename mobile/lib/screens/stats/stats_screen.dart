@@ -457,10 +457,10 @@ class _StatsScreenState extends State<StatsScreen> {
                                   const SizedBox(height: 4),
                                   Row(
                                     children: [
-                                      const Text('🪙', style: TextStyle(fontSize: 13)),
+                                      const Text('🏆', style: TextStyle(fontSize: 13)),
                                       const SizedBox(width: 4),
                                       Text(
-                                        '${_gamification['xp'] ?? 0} XP',
+                                        '$trophies trophée${trophies != 1 ? "s" : ""}',
                                         style: GoogleFonts.outfit(
                                           fontSize: 14,
                                           fontWeight: FontWeight.w600,
@@ -483,10 +483,7 @@ class _StatsScreenState extends State<StatsScreen> {
                         ClipRRect(
                           borderRadius: BorderRadius.circular(8),
                           child: LinearProgressIndicator(
-                            value:
-                                ((_gamification['xp'] ?? 0) as int) %
-                                500 /
-                                500.0,
+                            value: trophies == 0 ? 0.0 : (trophies % 10 == 0 ? 1.0 : (trophies % 10) / 10.0),
                             minHeight: 8,
                             backgroundColor: const Color(0xFFF1F5F9),
                             color: AppColors.primary,
@@ -496,7 +493,7 @@ class _StatsScreenState extends State<StatsScreen> {
                         Align(
                           alignment: Alignment.centerRight,
                           child: Text(
-                            '${((_gamification['xp'] ?? 0) as int) % 500}/500 XP ${isFr ? 'pour le niveau suivant' : 'to next level'}',
+                            '${trophies % 10}/10 ${isFr ? 'trophées pour le niveau suivant' : 'trophies to next level'}',
                             style: GoogleFonts.outfit(
                               fontSize: 11,
                               fontWeight: FontWeight.w600,

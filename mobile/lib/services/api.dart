@@ -322,15 +322,23 @@ class Api {
 
   // ─── Specialties ───
   static Future<List<dynamic>> getSpecialties() async {
-    final res = await http.get(
-      Uri.parse('$baseUrl/api/specialties'),
-      headers: _headers,
-    );
-    if (res.statusCode >= 200 && res.statusCode < 300) {
-      final data = json.decode(res.body) as Map<String, dynamic>;
-      return (data['specialties'] ?? []) as List<dynamic>;
+    Exception? lastError;
+    for (int attempt = 0; attempt < 3; attempt++) {
+      try {
+        if (attempt > 0) await Future.delayed(const Duration(seconds: 4));
+        final res = await http
+            .get(Uri.parse('$baseUrl/api/specialties'), headers: _headers)
+            .timeout(const Duration(seconds: 30));
+        if (res.statusCode >= 200 && res.statusCode < 300) {
+          final data = json.decode(res.body) as Map<String, dynamic>;
+          return (data['specialties'] ?? []) as List<dynamic>;
+        }
+        throw Exception('Erreur chargement des spécialités (${res.statusCode})');
+      } catch (e) {
+        lastError = e is Exception ? e : Exception(e.toString());
+      }
     }
-    throw Exception('Erreur chargement des spécialités');
+    throw lastError!;
   }
 
   // ─── Sessions ───

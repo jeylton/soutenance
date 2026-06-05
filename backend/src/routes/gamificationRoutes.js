@@ -127,6 +127,18 @@ function loadQuizAttempts() {
   catch { return {}; }
 }
 
+function computeHintBalance(purchases) {
+  const arr = Array.isArray(purchases) ? purchases : [];
+  let total = 0;
+  for (const p of arr) {
+    if (p === 'hint_pack_3') total += 3;
+    else if (p === 'hint_pack_10') total += 10;
+    else if (p === 'hint_initial_5') total += 5;
+  }
+  const used = arr.filter(p => p === 'hint_used').length;
+  return Math.max(0, total - used);
+}
+
 function saveQuizAttempts(data) {
   fs.mkdirSync(path.dirname(QUIZ_ATTEMPTS_FILE), { recursive: true });
   fs.writeFileSync(QUIZ_ATTEMPTS_FILE, JSON.stringify(data, null, 2));
@@ -310,16 +322,7 @@ router.get('/shop', authenticate, async (req, res) => {
       locked: (item.minLevel || 1) > userLevel,
     }));
 
-    // Count hint balance
-    const hintPurchases = purchases.filter(p => p === 'hint_pack_3' || p === 'hint_pack_10');
-    let totalHints = 0;
-    for (const hp of hintPurchases) {
-      totalHints += hp === 'hint_pack_3' ? 3 : 10;
-    }
-    // Subtract used hints
-    const usedHints = purchases.filter(p => p === 'hint_used').length;
-    const hintBalance = Math.max(0, totalHints - usedHints);
-
+    const hintBalance = computeHintBalance(purchases);
     return res.json({ items, xp, purchases, userLevel, hintBalance });
   } catch (e) {
     return res.status(500).json({ error: e.message });
@@ -381,12 +384,7 @@ router.post('/shop/buy', authenticate, async (req, res) => {
     allPurchases[userId] = purchases;
     savePurchases(allPurchases);
 
-    // Recalculate hint balance after purchase
-    const hintPurchasesAfter = purchases.filter(p => p === 'hint_pack_3' || p === 'hint_pack_10');
-    let totalHintsAfter = 0;
-    for (const hp of hintPurchasesAfter) totalHintsAfter += hp === 'hint_pack_3' ? 3 : 10;
-    const usedHintsAfter = purchases.filter(p => p === 'hint_used').length;
-    const hintBalanceAfter = Math.max(0, totalHintsAfter - usedHintsAfter);
+    const hintBalanceAfter = computeHintBalance(purchases);
 
     return res.json({
       success: true,
@@ -414,12 +412,7 @@ router.get('/inventory', authenticate, async (req, res) => {
       return purchases.includes(item.id);
     });
 
-    // Hint balance
-    const hintPurchases = purchases.filter(p => p === 'hint_pack_3' || p === 'hint_pack_10');
-    let totalHints = 0;
-    for (const hp of hintPurchases) totalHints += hp === 'hint_pack_3' ? 3 : 10;
-    const usedHints = purchases.filter(p => p === 'hint_used').length;
-    const hintBalance = Math.max(0, totalHints - usedHints);
+    const hintBalance = computeHintBalance(purchases);
 
     // Active avatar
     const activeAvatar = purchases.find(p => p.startsWith('active_avatar:'));
@@ -471,13 +464,7 @@ router.post('/use-hint', authenticate, async (req, res) => {
     const allPurchases = loadPurchases();
     const purchases = allPurchases[userId] || [];
 
-    // Calculate balance
-    const hintPurchases = purchases.filter(p => p === 'hint_pack_3' || p === 'hint_pack_10');
-    let totalHints = 0;
-    for (const hp of hintPurchases) totalHints += hp === 'hint_pack_3' ? 3 : 10;
-    const usedHints = purchases.filter(p => p === 'hint_used').length;
-    const hintBalance = totalHints - usedHints;
-
+    const hintBalance = computeHintBalance(purchases);
     if (hintBalance <= 0) {
       return res.status(400).json({ error: 'Aucun indice disponible', hintBalance: 0 });
     }

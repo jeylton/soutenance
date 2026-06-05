@@ -224,7 +224,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                       color: AppColors.textPlaceholder,
                     ),
                     items:
-                        ['Étudiant', 'Médecin', 'Joueur'].map((
+                        ['Étudiant en médecine', 'Médecin', 'Joueur'].map((
                           String value,
                         ) {
                           return DropdownMenuItem<String>(

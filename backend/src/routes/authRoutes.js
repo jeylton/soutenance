@@ -1,9 +1,13 @@
 const express = require('express');
 const router = express.Router();
+const fs = require('fs');
+const path = require('path');
 const bcrypt = require('bcryptjs');
 const supabase = require('../config/supabase');
 const { generateToken, authenticate } = require('../middleware/auth');
 const { validate } = require('../middleware/validate');
+
+const PURCHASES_FILE = path.join(__dirname, '../../data/purchases.json');
 
 const isDev = process.env.NODE_ENV !== 'production';
 
@@ -80,6 +84,8 @@ router.post('/register', validate({ body: { email: 'required', password: 'requir
     // Map profile_type to DB-allowed values: etudiant, medecin, interne, autre
     const profileMap = {
       'Étudiant': 'etudiant',
+      'Étudiant en médecine': 'etudiant',
+      'etudiant en medecine': 'etudiant',
       'Medecin': 'medecin',
       'Médecin': 'medecin',
       'Interne': 'interne',
@@ -112,6 +118,17 @@ router.post('/register', validate({ body: { email: 'required', password: 'requir
 
     // Initialize XP
     await supabase.from('user_xp').insert([{ user_id: user.id, xp: 0, level: 1 }]);
+
+    // Give 5 initial hints to new user
+    try {
+      let allPurchases = {};
+      if (fs.existsSync(PURCHASES_FILE)) {
+        allPurchases = JSON.parse(fs.readFileSync(PURCHASES_FILE, 'utf8'));
+      }
+      allPurchases[user.id] = ['hint_initial_5'];
+      fs.mkdirSync(path.dirname(PURCHASES_FILE), { recursive: true });
+      fs.writeFileSync(PURCHASES_FILE, JSON.stringify(allPurchases, null, 2));
+    } catch (_) {}
 
     const token = generateToken(user);
     return res.status(201).json({ token, user });
