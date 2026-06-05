@@ -1023,11 +1023,19 @@ router.post('/hint', async (req, res) => {
     const { data: caseRow, error: caseError } = await supabase.from('cases').select('*').eq('id', case_id).single();
     if (caseError) return res.status(500).json({ error: caseError.message });
 
+    const { data: caseExams } = await supabase.from('case_exams').select('name,is_relevant').eq('case_id', case_id);
+    const relevantExams = (caseExams || []).filter(e => e.is_relevant !== false).map(e => e.name);
+
     const mh = caseRow.medical_history || {};
     const type = (hint_type || 'general').toString().toLowerCase();
+
+    const examList = relevantExams.length > 0
+      ? `Examens disponibles dans ce cas : ${relevantExams.join(', ')}.`
+      : '';
+
     const guidanceByType = {
-      exam: `Donne un indice orienté vers un examen complémentaire utile sans citer le diagnostic.\n- Mentionne au plus 2 examens pertinents.`,
-      symptom: `Donne un indice orienté vers un symptôme/signe clinique important à explorer au lit du patient.`,
+      exam: `Donne un indice orienté vers un ou deux examens utiles parmi ceux disponibles dans ce cas. Ne cite PAS le diagnostic. ${examList}`,
+      symptom: `Donne un indice orienté vers un symptôme ou signe clinique important à explorer chez ce patient.`,
       general: `Donne un indice de raisonnement global (interrogatoire, examen clinique, physiopathologie).`,
     };
 
@@ -1037,14 +1045,11 @@ Cas: ${caseRow.consultation_reason || caseRow.patient_name}
 Symptômes initiaux: ${caseRow.initial_symptoms || ''}
 Spécialité: ${mh.specialty || ''}
 Difficulté: ${caseRow.difficulty || 1}/3
-Type d'indice demandé: ${type}
+${examList}
 
 ${guidanceByType[type] || guidanceByType.general}
 
-Donne UN SEUL indice concis (2-3 phrases max) qui aide l'étudiant à mieux orienter son raisonnement clinique SANS révéler le diagnostic directement. L'indice peut suggérer:
-- Un axe d'interrogatoire à explorer
-- Un signe clinique à rechercher
-- Une piste de réflexion sur la physiopathologie
+Donne UN SEUL indice concis (2-3 phrases max) qui aide l'étudiant SANS révéler le diagnostic. Ne propose que des examens qui figurent dans la liste ci-dessus.
 
 Réponds UNIQUEMENT avec l'indice, sans introduction ni conclusion.`;
 

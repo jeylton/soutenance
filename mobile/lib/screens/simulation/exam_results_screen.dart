@@ -758,6 +758,10 @@ class _ExamResultsScreenState extends State<ExamResultsScreen>
                   },
                 );
                 final score = (result['score'] ?? 0) as int;
+                final xpEarned = (result['xp_earned'] ?? 0) as int;
+                if (xpEarned > 0) {
+                  sessionState.updateProfile(xp: sessionState.xp + xpEarned);
+                }
                 final expectedTreatment =
                     result['expected_treatment'] as List<dynamic>?;
                 final treatmentNotes = result['treatment_notes'] as String?;
