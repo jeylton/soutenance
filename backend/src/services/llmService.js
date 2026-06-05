@@ -132,7 +132,7 @@ async function callGroq(systemPrompt, userMessage, options = {}) {
     }
 
     const baseURL = String(process.env.GROQ_BASE_URL || 'https://api.groq.com/openai/v1').trim();
-    const modelId = String(process.env.GROQ_MODEL || 'llama-3.1-8b-instant').trim();
+    const modelId = String(process.env.GROQ_MODEL || 'llama-3.3-70b-versatile').trim();
 
     return callOpenAiCompatible({
         providerLabel: 'Groq',
