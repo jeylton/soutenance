@@ -77,16 +77,21 @@ router.post('/register', validate({ body: { email: 'required', password: 'requir
     // Hash password
     const password_hash = await bcrypt.hash(password, 12);
 
-    // Map profile_type (restricted to 3 profiles)
+    // Map profile_type to DB-allowed values: etudiant, medecin, interne, autre
     const profileMap = {
       'Étudiant': 'etudiant',
+      'Medecin': 'medecin',
       'Médecin': 'medecin',
-      'Joueur': 'joueur',
+      'Interne': 'interne',
+      'Joueur': 'autre',
+      'joueur': 'autre',
     };
-    const mappedProfile = profileMap[profile_type] || profile_type || 'etudiant';
-    const allowedProfiles = new Set(['etudiant', 'medecin', 'joueur']);
+    const mappedProfile = profileMap[profile_type] || (
+      ['etudiant','medecin','interne','autre'].includes(profile_type) ? profile_type : 'etudiant'
+    );
+    const allowedProfiles = new Set(['etudiant', 'medecin', 'interne', 'autre']);
     if (!allowedProfiles.has(mappedProfile)) {
-      return res.status(400).json({ error: 'Type de profil invalide (Étudiant, Médecin, Joueur)' });
+      return res.status(400).json({ error: 'Type de profil invalide' });
     }
 
     // Insert user

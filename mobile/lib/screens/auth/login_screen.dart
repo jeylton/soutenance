@@ -335,46 +335,6 @@ class _LoginScreenState extends State<LoginScreen> {
                           ),
                 ),
 
-                const SizedBox(height: 48),
-                Row(
-                  children: [
-                    const Expanded(
-                      child: Divider(color: AppColors.border, thickness: 1.5),
-                    ),
-                    Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 16),
-                      child: Text(
-                        'OU',
-                        style: GoogleFonts.outfit(
-                          fontSize: 12,
-                          fontWeight: FontWeight.w900,
-                          color: AppColors.textPlaceholder,
-                          letterSpacing: 2,
-                        ),
-                      ),
-                    ),
-                    const Expanded(
-                      child: Divider(color: AppColors.border, thickness: 1.5),
-                    ),
-                  ],
-                ),
-
-                const SizedBox(height: 40),
-                // Social Login Buttons
-                _buildSocialButton(
-                  icon: LucideIcons.chrome,
-                  label: 'Continuer avec Google',
-                  onPressed:
-                      _isSocialLoading ? () {} : () => _socialLogin('google'),
-                ),
-                const SizedBox(height: 16),
-                _buildSocialButton(
-                  icon: LucideIcons.apple,
-                  label: 'Continuer avec Apple',
-                  onPressed:
-                      _isSocialLoading ? () {} : () => _socialLogin('apple'),
-                ),
-
                 const SizedBox(height: 60),
                 Row(
                   mainAxisAlignment: MainAxisAlignment.center,
