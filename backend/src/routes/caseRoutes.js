@@ -121,6 +121,7 @@ router.post('/', async (req, res) => {
           case_id: caseId,
           name: e.name,
           result: e.result || '',
+          is_relevant: e.is_relevant !== false,
         }));
       if (examRows.length > 0) {
         const { error: examError } = await supabase.from('case_exams').insert(examRows);
@@ -229,7 +230,8 @@ router.put('/:id', async (req, res) => {
       await supabase.from('case_exams').delete().eq('case_id', id);
       if (exams.length > 0) {
         const examRows = exams.filter(e => e && e.name).map(e => ({
-          case_id: Number(id), name: e.name, result: e.result || ''
+          case_id: Number(id), name: e.name, result: e.result || '',
+          is_relevant: e.is_relevant !== false,
         }));
         if (examRows.length > 0) {
           await supabase.from('case_exams').insert(examRows);
