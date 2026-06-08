@@ -1231,26 +1231,8 @@ class _SimulationScreenState extends State<SimulationScreen> {
 
   Widget _buildPatientVisual(String avatarUrl, double size) {
     final avatar = _buildAvatarWidget(avatarUrl, size);
-
-    // When speaking: try the talking GIF, fall back to avatar on error.
-    // Each rebuild gets a fresh attempt — no permanent disabled state.
-    final speakingWidget = Image.asset(
-      _talkingGifAsset,
-      fit: BoxFit.cover,
-      gaplessPlayback: true,
-      errorBuilder: (_, __, ___) => avatar,
-    );
-
-    return IgnorePointer(
-      child: AnimatedSwitcher(
-        duration: const Duration(milliseconds: 150),
-        switchInCurve: Curves.easeOut,
-        switchOutCurve: Curves.easeIn,
-        child: _isPatientSpeaking
-            ? KeyedSubtree(key: const ValueKey('speaking'), child: speakingWidget)
-            : KeyedSubtree(key: const ValueKey('idle'), child: avatar),
-      ),
-    );
+    // Always show the patient's own avatar (gif1-gif6 are already animated)
+    return IgnorePointer(child: avatar);
   }
 
   Widget _buildPatientInfoBar() {
