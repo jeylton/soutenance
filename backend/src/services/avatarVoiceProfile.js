@@ -79,6 +79,17 @@ const ageToGroup = (age) => {
 };
 
 const resolveAvatarProfile = ({ avatar, age, gender } = {}) => {
+  // gender from medical_history always takes priority — ensures voice matches patient sex
+  if (gender) {
+    const ageGroup = ageToGroup(age);
+    const genderNorm = normalizeGender(gender);
+    return (
+      AVATAR_VOICE_PROFILES.find((p) => p.ageGroup === ageGroup && p.gender === genderNorm) ||
+      AVATAR_VOICE_PROFILES[0]
+    );
+  }
+
+  // No gender info — fall back to avatar filename
   const normalizedAvatar = (avatar || '').toString().trim().toLowerCase();
   if (normalizedAvatar) {
     // Legacy avatar filenames (seeded data / older DB rows)
@@ -103,12 +114,7 @@ const resolveAvatarProfile = ({ avatar, age, gender } = {}) => {
     if (bySuffix) return bySuffix;
   }
 
-  const ageGroup = ageToGroup(age);
-  const genderNorm = normalizeGender(gender);
-  return (
-    AVATAR_VOICE_PROFILES.find((p) => p.ageGroup === ageGroup && p.gender === genderNorm) ||
-    AVATAR_VOICE_PROFILES[0]
-  );
+  return AVATAR_VOICE_PROFILES[0];
 };
 
 module.exports = {

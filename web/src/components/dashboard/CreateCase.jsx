@@ -174,15 +174,12 @@ const CreateCase = ({ onBack, editData, presetSpecialtyId, presetSeason, presetE
         return { season, episode: 11 }; // 11 = saison complète
     };
 
+    // Sync avatar+voice whenever gender or age changes — gender is always the source of truth
     useEffect(() => {
-        const profile = resolveAvatarByValue(selectedAvatarPath) || resolveAvatarProfile({ age: patientAge, gender: patientGender });
-        if (!selectedAvatarPath && profile?.path) {
-            setSelectedAvatarPath(profile.path);
-        }
-        if (profile?.voiceId) {
-            setSelectedVoiceId(profile.voiceId);
-        }
-    }, [patientAge, patientGender, selectedAvatarPath]);
+        const profile = resolveAvatarProfile({ age: patientAge, gender: patientGender });
+        if (profile?.path) setSelectedAvatarPath(profile.path);
+        if (profile?.voiceId) setSelectedVoiceId(profile.voiceId);
+    }, [patientAge, patientGender]);
 
     useEffect(() => {
         fetch(`${api}/api/specialties`)
@@ -527,6 +524,8 @@ const CreateCase = ({ onBack, editData, presetSpecialtyId, presetSeason, presetE
                                     onSelect={() => {
                                         setSelectedAvatarPath(av.path);
                                         setSelectedVoiceId(av.voiceId || '');
+                                        // Sync gender dropdown to match the chosen avatar
+                                        setPatientGender(av.gender === 'female' ? 'Féminin' : 'Masculin');
                                     }}
                                 />
                             ))}
