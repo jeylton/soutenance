@@ -1,14 +1,6 @@
 const express = require('express');
 const router = express.Router();
 const supabase = require('../config/supabase');
-const fs = require('fs');
-const path = require('path');
-
-const PURCHASES_FILE = path.join(__dirname, '../../data/purchases.json');
-function loadPurchases() {
-  try { return JSON.parse(fs.readFileSync(PURCHASES_FILE, 'utf8')); }
-  catch { return {}; }
-}
 
 router.get('/', async (req, res) => {
   const { status } = req.query; // etudiant | medecin | interne | autre
@@ -21,10 +13,17 @@ router.get('/', async (req, res) => {
     if (error) {
       return res.status(500).json({ error: error.message });
     }
-    // Enrich with active avatar from purchases
-    const purchases = loadPurchases();
+    // Enrich with active avatar from Supabase purchases store
+    const userIds = (data || []).map(u => String(u.id));
+    let purchasesByUser = {};
+    if (userIds.length > 0) {
+      const { data: storeRows } = await supabase.from('user_purchases_store').select('user_id,purchases').in('user_id', userIds);
+      for (const row of (storeRows || [])) {
+        purchasesByUser[String(row.user_id)] = Array.isArray(row.purchases) ? row.purchases : [];
+      }
+    }
     const users = (data || []).map(u => {
-      const userPurchases = purchases[u.id] || [];
+      const userPurchases = purchasesByUser[String(u.id)] || [];
       const activeAvatar = userPurchases.find(p => p.startsWith('active_avatar:'));
       return { ...u, avatar_id: activeAvatar ? activeAvatar.split(':')[1] : null };
     });

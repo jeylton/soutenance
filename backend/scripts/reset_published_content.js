@@ -2,8 +2,8 @@
  * Reset published content for a clean demo/dev baseline.
  *
  * What it does (default):
- * - Clears backend/data/published_quizzes.json (sets to [])
- * - Clears backend/data/quiz_attempts.json (sets to {})
+ * - Deletes all rows from published_quizzes (Supabase)
+ * - Deletes all rows from user_quiz_store (Supabase)
  * - Deletes published courses (Supabase table: courses where status='published')
  * - Deletes active cases (Supabase table: cases where status='active')
  *   and their related case_exams rows.
@@ -19,49 +19,40 @@
 const path = require('path');
 require('dotenv').config({ path: path.join(__dirname, '..', '.env') });
 
-const fs = require('fs');
 const { createClient } = require('@supabase/supabase-js');
 
 function hasFlag(name) {
   return process.argv.slice(2).includes(`--${name}`);
 }
 
-function writeJson(filePath, value) {
-  fs.mkdirSync(path.dirname(filePath), { recursive: true });
-  fs.writeFileSync(filePath, JSON.stringify(value, null, 2), 'utf8');
-}
-
 async function main() {
   const includeDrafts = hasFlag('include-drafts');
-
-  const publishedQuizzesPath = path.join(__dirname, '..', 'data', 'published_quizzes.json');
-  const quizAttemptsPath = path.join(__dirname, '..', 'data', 'quiz_attempts.json');
 
   console.log('🧹 Reset content (published)');
   console.log('   - includeDrafts:', includeDrafts);
 
-  // 1) Clear JSON stores used by quiz system
-  writeJson(publishedQuizzesPath, []);
-  console.log('  ✓ cleared published_quizzes.json');
-
-  writeJson(quizAttemptsPath, {});
-  console.log('  ✓ cleared quiz_attempts.json');
-
   const supabaseUrl = process.env.SUPABASE_URL;
   const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
   if (!supabaseUrl || !serviceRoleKey) {
-    console.log('\n⚠ Supabase credentials missing; local JSON reset done only.');
-    console.log('   Create backend/.env with:');
-    console.log('   - SUPABASE_URL=...');
-    console.log('   - SUPABASE_SERVICE_ROLE_KEY=...');
-    console.log('\nThen re-run: node scripts/reset_published_content.js --include-drafts');
-    console.log('\n✅ Done (local-only)');
-    return;
+    console.error('\n⚠ Supabase credentials missing. Create backend/.env with SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY.');
+    process.exit(1);
   }
 
   const supabase = createClient(supabaseUrl, serviceRoleKey, {
     auth: { persistSession: false, autoRefreshToken: false },
   });
+
+  // 1b) Clear Supabase quiz stores
+  {
+    const { error } = await supabase.from('published_quizzes').delete().neq('id', '00000000-0000-0000-0000-000000000000');
+    if (error) console.error('  ✗ failed clearing published_quizzes:', error.message);
+    else console.log('  ✓ cleared published_quizzes (Supabase)');
+  }
+  {
+    const { error } = await supabase.from('user_quiz_store').delete().neq('user_id', '');
+    if (error) console.error('  ✗ failed clearing user_quiz_store:', error.message);
+    else console.log('  ✓ cleared user_quiz_store (Supabase)');
+  }
 
   // 2) Delete published courses
   {

@@ -12,11 +12,7 @@
 const path = require('path');
 require('dotenv').config({ path: path.join(__dirname, '..', '.env') });
 
-const fs = require('fs');
 const { createClient } = require('@supabase/supabase-js');
-
-const PURCHASES_FILE = path.join(__dirname, '..', 'data', 'purchases.json');
-const QUIZ_ATTEMPTS_FILE = path.join(__dirname, '..', 'data', 'quiz_attempts.json');
 
 function getEmail() {
   const idx = process.argv.indexOf('--email');
@@ -87,31 +83,15 @@ async function main() {
   await supabase.from('user_badges').delete().eq('user_id', userId);
   console.log('  ✓ badges supprimés');
 
-  // 5) Reset achats boutique (fichier JSON local)
-  try {
-    if (fs.existsSync(PURCHASES_FILE)) {
-      const raw = JSON.parse(fs.readFileSync(PURCHASES_FILE, 'utf8'));
-      if (raw[userId]) {
-        delete raw[userId];
-        fs.writeFileSync(PURCHASES_FILE, JSON.stringify(raw, null, 2), 'utf8');
-        console.log('  ✓ achats boutique supprimés');
-      } else {
-        console.log('  ✓ aucun achat boutique trouvé');
-      }
-    }
-  } catch (_) { console.log('  ⚠ fichier purchases.json introuvable, ignoré'); }
+  // 5) Reset achats boutique (Supabase)
+  const { error: purchErr } = await supabase.from('user_purchases_store').delete().eq('user_id', String(userId));
+  if (purchErr) console.error('  ✗ erreur suppression achats:', purchErr.message);
+  else console.log('  ✓ achats boutique supprimés');
 
-  // 6) Reset quiz attempts (fichier JSON local)
-  try {
-    if (fs.existsSync(QUIZ_ATTEMPTS_FILE)) {
-      const raw = JSON.parse(fs.readFileSync(QUIZ_ATTEMPTS_FILE, 'utf8'));
-      if (raw[userId]) {
-        delete raw[userId];
-        fs.writeFileSync(QUIZ_ATTEMPTS_FILE, JSON.stringify(raw, null, 2), 'utf8');
-        console.log('  ✓ tentatives quiz supprimées');
-      }
-    }
-  } catch (_) {}
+  // 6) Reset quiz attempts (Supabase)
+  const { error: quizErr } = await supabase.from('user_quiz_store').delete().eq('user_id', String(userId));
+  if (quizErr) console.error('  ✗ erreur suppression quiz attempts:', quizErr.message);
+  else console.log('  ✓ tentatives quiz supprimées');
 
   console.log('\n✅ Compte réinitialisé avec succès.');
 }

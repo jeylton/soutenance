@@ -7,7 +7,28 @@ const supabase = require('../config/supabase');
 const { generateResponse, generatePatientResponse, generateCase, generateCourse, generateQuizFromCase } = require('../services/llmService');
 const { resolveAvatarProfile, GOOGLE_TTS_PROFILES } = require('../services/avatarVoiceProfile');
 
-const PUBLISHED_QUIZZES_FILE = path.join(__dirname, '../../data/published_quizzes.json');
+// ─── Published quizzes — Supabase (persistent across Render restarts) ───
+async function loadPublishedQuizzes() {
+  try {
+    const { data } = await supabase.from('published_quizzes').select('*').order('created_at', { ascending: false });
+    return data || [];
+  } catch { return []; }
+}
+
+async function upsertQuiz(row) {
+  const { error } = await supabase.from('published_quizzes').upsert(row, { onConflict: 'id' });
+  if (error) throw error;
+}
+
+async function updateQuizById(id, updates) {
+  const { error } = await supabase.from('published_quizzes').update(updates).eq('id', id);
+  if (error) throw error;
+}
+
+async function deleteQuizById(id) {
+  const { error } = await supabase.from('published_quizzes').delete().eq('id', id);
+  if (error) throw error;
+}
 
 const REQUIRED_SVT_SECTIONS = [
   '1. TITRE DU COURS :',
@@ -781,7 +802,7 @@ router.post('/publish-quiz', async (req, res) => {
     });
   }
 
-  const published = loadPublishedQuizzes();
+  const published = await loadPublishedQuizzes();
 
   // Guardrail: prevent publishing into a season that is already complete (10 episodes)
   // for the same specialty. This reduces accidental re-publication of Season 1.
@@ -890,7 +911,7 @@ router.post('/publish-quiz', async (req, res) => {
     });
   }
 
-  savePublishedQuizzes(published);
+  await upsertQuiz({ ...row, created_at: row.created_at || new Date().toISOString() });
   return res.json({ quiz: row });
 });
 
@@ -899,7 +920,7 @@ router.get('/published-quizzes', async (req, res) => {
   const status = String(req.query.status || 'published').trim().toLowerCase();
   const specialtyId = Number(req.query.specialty_id || 0);
   const season = Number(req.query.season || 0);
-  const rows = loadPublishedQuizzes();
+  const rows = await loadPublishedQuizzes();
   const withDefaults = (rows || []).map((q) => ({
     ...q,
     status: String(q?.status || 'published').toLowerCase(),
@@ -946,23 +967,21 @@ router.patch('/published-quizzes/:id', async (req, res) => {
     return res.status(400).json({ error: 'status invalide' });
   }
 
-  const rows = loadPublishedQuizzes();
-  const idx = rows.findIndex((q) => String(q?.id || '') === id);
-  if (idx === -1) {
+  const rows = await loadPublishedQuizzes();
+  const existing = rows.find((q) => String(q?.id || '') === id);
+  if (!existing) {
     return res.status(404).json({ error: 'quiz introuvable' });
   }
 
-  const updated = {
-    ...rows[idx],
+  const updates = {
     ...(typeof title === 'string' && title.trim() ? { title: title.trim() } : {}),
     ...(typeof disease === 'string' && disease.trim() ? { disease: disease.trim() } : {}),
     ...(nextStatus ? { status: nextStatus } : {}),
     updated_at: new Date().toISOString(),
   };
 
-  rows[idx] = updated;
-  savePublishedQuizzes(rows);
-  return res.json({ quiz: updated });
+  await updateQuizById(id, updates);
+  return res.json({ quiz: { ...existing, ...updates } });
 });
 
 // ─── Delete published quiz (admin) ───
@@ -972,14 +991,13 @@ router.delete('/published-quizzes/:id', async (req, res) => {
     return res.status(400).json({ error: 'id requis' });
   }
 
-  const rows = loadPublishedQuizzes();
-  const idx = rows.findIndex((q) => String(q?.id || '') === id);
-  if (idx === -1) {
+  const rows = await loadPublishedQuizzes();
+  const removed = rows.find((q) => String(q?.id || '') === id);
+  if (!removed) {
     return res.status(404).json({ error: 'quiz introuvable' });
   }
 
-  const [removed] = rows.splice(idx, 1);
-  savePublishedQuizzes(rows);
+  await deleteQuizById(id);
   return res.json({ deleted: true, quiz: removed });
 });
 

@@ -1,13 +1,9 @@
 const express = require('express');
 const router = express.Router();
-const fs = require('fs');
-const path = require('path');
 const supabase = require('../config/supabase');
 const { authenticate } = require('../middleware/auth');
 
-// ─── Purchases file store (no DDL needed) ───
-const PURCHASES_FILE = path.join(__dirname, '../../data/purchases.json');
-const QUIZ_ATTEMPTS_FILE = path.join(__dirname, '../../data/quiz_attempts.json');
+// ─── Persistent stores via Supabase (survives Render restarts) ───
 
 function starsFromCaseScore(score20) {
   const s = Math.max(0, Math.min(20, Number(score20) || 0));
@@ -71,8 +67,7 @@ async function computeTrophiesForUser(userId) {
   }
 
   // Quiz: best accuracy per quiz_key → stars.
-  const attemptsDb = loadQuizAttempts();
-  const quizAttempts = Array.isArray(attemptsDb[uid]) ? attemptsDb[uid] : [];
+  const quizAttempts = await loadUserQuizAttempts(uid);
   const quizTrophies = computeQuizTrophies(quizAttempts);
 
   return { trophies: caseTrophies + quizTrophies, cases: caseTrophies, quiz: quizTrophies };
@@ -112,19 +107,28 @@ function chunkArray(values, chunkSize) {
   return chunks;
 }
 
-function loadPurchases() {
-  try { return JSON.parse(fs.readFileSync(PURCHASES_FILE, 'utf8')); }
-  catch { return {}; }
+async function loadUserPurchases(userId) {
+  const { data } = await supabase.from('user_purchases_store').select('purchases').eq('user_id', String(userId)).maybeSingle();
+  return Array.isArray(data?.purchases) ? data.purchases : [];
 }
 
-function savePurchases(data) {
-  fs.mkdirSync(path.dirname(PURCHASES_FILE), { recursive: true });
-  fs.writeFileSync(PURCHASES_FILE, JSON.stringify(data, null, 2));
+async function saveUserPurchases(userId, purchases) {
+  await supabase.from('user_purchases_store').upsert(
+    { user_id: String(userId), purchases, updated_at: new Date().toISOString() },
+    { onConflict: 'user_id' }
+  );
 }
 
-function loadQuizAttempts() {
-  try { return JSON.parse(fs.readFileSync(QUIZ_ATTEMPTS_FILE, 'utf8')); }
-  catch { return {}; }
+async function loadUserQuizAttempts(userId) {
+  const { data } = await supabase.from('user_quiz_store').select('attempts').eq('user_id', String(userId)).maybeSingle();
+  return Array.isArray(data?.attempts) ? data.attempts : [];
+}
+
+async function saveUserQuizAttempts(userId, attempts) {
+  await supabase.from('user_quiz_store').upsert(
+    { user_id: String(userId), attempts, updated_at: new Date().toISOString() },
+    { onConflict: 'user_id' }
+  );
 }
 
 function computeHintBalance(purchases) {
@@ -137,11 +141,6 @@ function computeHintBalance(purchases) {
   }
   const used = arr.filter(p => p === 'hint_used').length;
   return Math.max(0, total - used);
-}
-
-function saveQuizAttempts(data) {
-  fs.mkdirSync(path.dirname(QUIZ_ATTEMPTS_FILE), { recursive: true });
-  fs.writeFileSync(QUIZ_ATTEMPTS_FILE, JSON.stringify(data, null, 2));
 }
 
 // ─── GET /api/gamification/me — Get XP, level, badges for current user ───
@@ -225,12 +224,12 @@ router.get('/leaderboard', async (_req, res) => {
     }
     const caseTrophiesByUser = computeCaseTrophiesFromSessions(allSessions);
 
-    // Quiz trophies from file store.
-    const attemptsDb = loadQuizAttempts();
+    // Quiz trophies from Supabase.
     const quizTrophiesByUser = new Map();
-    for (const id of userIds) {
-      const uid = String(id);
-      const attempts = Array.isArray(attemptsDb[uid]) ? attemptsDb[uid] : [];
+    const { data: allQuizStore } = await supabase.from('user_quiz_store').select('user_id,attempts').in('user_id', userIds.map(String));
+    for (const row of (allQuizStore || [])) {
+      const uid = String(row.user_id);
+      const attempts = Array.isArray(row.attempts) ? row.attempts : [];
       quizTrophiesByUser.set(uid, computeQuizTrophies(attempts));
     }
 
@@ -308,8 +307,7 @@ router.get('/shop', authenticate, async (req, res) => {
     const { data: xpRow } = await supabase.from('user_xp').select('xp').eq('user_id', userId).single();
     const xp = xpRow?.xp || 0;
 
-    const allPurchases = loadPurchases();
-    const purchases = allPurchases[userId] || [];
+    const purchases = await loadUserPurchases(userId);
 
     // Get user level (derived from trophies).
     const trophyTotals = await computeTrophiesForUser(userId);
@@ -349,8 +347,7 @@ router.post('/shop/buy', authenticate, async (req, res) => {
     if (!xpRow) return res.status(400).json({ error: 'Profil XP introuvable' });
 
     const currentXP = xpRow.xp || 0;
-    const allPurchases = loadPurchases();
-    const purchases = allPurchases[userId] || [];
+    const purchases = await loadUserPurchases(userId);
 
     // Check if non-consumable already owned
     if (item.category !== 'consumable' && purchases.includes(itemId)) {
@@ -381,8 +378,7 @@ router.post('/shop/buy', authenticate, async (req, res) => {
 
     // Save purchase
     purchases.push(itemId);
-    allPurchases[userId] = purchases;
-    savePurchases(allPurchases);
+    await saveUserPurchases(userId, purchases);
 
     const hintBalanceAfter = computeHintBalance(purchases);
 
@@ -403,8 +399,7 @@ router.post('/shop/buy', authenticate, async (req, res) => {
 router.get('/inventory', authenticate, async (req, res) => {
   try {
     const userId = req.user.id;
-    const allPurchases = loadPurchases();
-    const purchases = allPurchases[userId] || [];
+    const purchases = await loadUserPurchases(userId);
 
     // Group owned non-consumable items
     const ownedItems = SHOP_ITEMS.filter(item => {
@@ -437,8 +432,7 @@ router.post('/equip', authenticate, async (req, res) => {
     const item = SHOP_ITEMS.find(i => i.id === itemId);
     if (!item) return res.status(404).json({ error: 'Article introuvable' });
 
-    const allPurchases = loadPurchases();
-    const purchases = allPurchases[userId] || [];
+    const purchases = await loadUserPurchases(userId);
 
     if (!purchases.includes(itemId)) {
       return res.status(400).json({ error: 'Vous ne possédez pas cet article' });
@@ -448,8 +442,7 @@ router.post('/equip', authenticate, async (req, res) => {
     const prefix = item.category === 'avatar' ? 'active_avatar:' : 'active_title:';
     const filtered = purchases.filter(p => !p.startsWith(prefix));
     filtered.push(`${prefix}${itemId}`);
-    allPurchases[userId] = filtered;
-    savePurchases(allPurchases);
+    await saveUserPurchases(userId, filtered);
 
     return res.json({ success: true, equipped: itemId });
   } catch (e) {
@@ -461,8 +454,7 @@ router.post('/equip', authenticate, async (req, res) => {
 router.post('/use-hint', authenticate, async (req, res) => {
   try {
     const userId = req.user.id;
-    const allPurchases = loadPurchases();
-    const purchases = allPurchases[userId] || [];
+    const purchases = await loadUserPurchases(userId);
 
     const hintBalance = computeHintBalance(purchases);
     if (hintBalance <= 0) {
@@ -470,8 +462,7 @@ router.post('/use-hint', authenticate, async (req, res) => {
     }
 
     purchases.push('hint_used');
-    allPurchases[userId] = purchases;
-    savePurchases(allPurchases);
+    await saveUserPurchases(userId, purchases);
 
     return res.json({ success: true, hintBalance: hintBalance - 1 });
   } catch (e) {
@@ -491,8 +482,7 @@ router.post('/quiz-reward', authenticate, async (req, res) => {
     const quizKey = String(quiz_key || 'quiz-generic').trim() || 'quiz-generic';
     const timeSpent = Math.max(0, Number(time_spent_seconds) || 0);
 
-    const attemptsDb = loadQuizAttempts();
-    const userEntries = Array.isArray(attemptsDb[userId]) ? attemptsDb[userId] : [];
+    const userEntries = await loadUserQuizAttempts(userId);
     const previousCompletions = userEntries.filter((a) => a.quiz_key === quizKey).length;
     const replayScale = [1, 0.55, 0.3, 0.15, 0.1][Math.min(previousCompletions, 4)];
 
@@ -502,11 +492,9 @@ router.post('/quiz-reward', authenticate, async (req, res) => {
     const pointsEarned = Math.max(0, Math.round(basePoints * replayScale));
     let xpEarned = Math.max(1, Math.round(baseXP * replayScale));
 
-    // Apply XP boost (money) if user owns at least one and hasn't consumed it yet.
-    // Stored as purchases in purchases.json (no DB migration).
+    // Apply XP boost if user owns at least one and hasn't consumed it yet.
     try {
-      const allPurchases = loadPurchases();
-      const purchases = Array.isArray(allPurchases[userId]) ? allPurchases[userId] : [];
+      const purchases = await loadUserPurchases(userId);
       const bought = purchases.filter((p) => p === 'xp_boost').length;
       const used = purchases.filter((p) => p === 'xp_boost_used').length;
       const balance = bought - used;
@@ -514,8 +502,7 @@ router.post('/quiz-reward', authenticate, async (req, res) => {
       if (balance > 0) {
         xpEarned = xpEarned * 2;
         purchases.push('xp_boost_used');
-        allPurchases[userId] = purchases;
-        savePurchases(allPurchases);
+        await saveUserPurchases(userId, purchases);
       }
     } catch (e) {
       // Non-blocking: scoring should still work even if purchases store fails.
@@ -533,8 +520,7 @@ router.post('/quiz-reward', authenticate, async (req, res) => {
       time_spent_seconds: timeSpent,
       created_at: new Date().toISOString(),
     });
-    attemptsDb[userId] = userEntries;
-    saveQuizAttempts(attemptsDb);
+    await saveUserQuizAttempts(userId, userEntries);
 
     await awardXP(userId, xpEarned);
 
@@ -579,8 +565,7 @@ router.post('/quiz-reward', authenticate, async (req, res) => {
 router.get('/quiz-attempts', authenticate, async (req, res) => {
   try {
     const userId = req.user.id;
-    const attemptsDb = loadQuizAttempts();
-    const attempts = Array.isArray(attemptsDb[userId]) ? attemptsDb[userId] : [];
+    const attempts = await loadUserQuizAttempts(userId);
 
     const summary = attempts.reduce((acc, entry) => {
       const key = String(entry?.quiz_key || '').trim();
