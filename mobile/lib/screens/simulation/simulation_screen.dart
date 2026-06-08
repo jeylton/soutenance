@@ -11,6 +11,7 @@ import 'package:flutter_tts/flutter_tts.dart';
 import 'package:audioplayers/audioplayers.dart';
 import '../../theme/app_theme.dart';
 import '../../services/api.dart';
+import '../../services/avatar_helper.dart';
 import '../../state/session_state.dart';
 import 'exam_order_sheet.dart';
 import 'exam_results_screen.dart';
@@ -1354,7 +1355,7 @@ class _SimulationScreenState extends State<SimulationScreen> {
     final patientName = caseData?['patient_name'] ?? 'Patient';
     final consultationReason =
         caseData?['consultation_reason'] ?? 'Consultation';
-    final avatarUrl = Api.normalizeAssetUrl(caseData?['avatar'] as String?);
+    final avatarUrl = resolvePatientAvatarUrl(caseData);
     final effectiveAvatar =
         avatarUrl.isNotEmpty
             ? avatarUrl

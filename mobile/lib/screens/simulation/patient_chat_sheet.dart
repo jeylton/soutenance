@@ -5,6 +5,7 @@ import 'package:flutter_tts/flutter_tts.dart';
 import 'package:audioplayers/audioplayers.dart';
 import '../../theme/app_theme.dart';
 import '../../services/api.dart';
+import '../../services/avatar_helper.dart';
 import 'package:provider/provider.dart';
 import '../../state/session_state.dart';
 
@@ -399,9 +400,7 @@ class _PatientChatSheetState extends State<PatientChatSheet> {
   Widget _buildHeader(BuildContext context) {
     final state = Provider.of<SessionState>(context);
     final caseData = state.caseData;
-    final avatarUrl = Api.normalizeAssetUrl(
-      (caseData?['avatar'] ?? '').toString(),
-    );
+    final avatarUrl = resolvePatientAvatarUrl(caseData);
 
     return Padding(
       padding: const EdgeInsets.fromLTRB(20, 12, 16, 12),
