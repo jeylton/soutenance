@@ -11,60 +11,11 @@ const API_BASE = resolveApiBase();
 
 const voiceOr = (envName, fallback) => (import.meta.env[envName] || fallback || '').trim();
 
-const AVATAR_PROFILES = [
-  {
-    hint: 'male_young',
-    label: 'GIF 1',
-    path: '/avatars/gif1.gif',
-    ageGroup: 'adult',
-    gender: 'male',
-    voiceId: voiceOr('VITE_ELEVENLABS_VOICE_GIF1', '101A8UFM73tcrunWGirw'),
-  },
-  {
-    hint: 'female_young',
-    label: 'GIF 2',
-    path: '/avatars/gif2.gif',
-    ageGroup: 'adult',
-    gender: 'female',
-    voiceId: voiceOr('VITE_ELEVENLABS_VOICE_GIF2', 'fBpCO0Kf0krKLYGOu65w'),
-  },
-  {
-    hint: 'male_old',
-    label: 'GIF 3',
-    path: '/avatars/gif3.gif',
-    ageGroup: 'senior',
-    gender: 'male',
-    voiceId: voiceOr('VITE_ELEVENLABS_VOICE_GIF3', '6aRkp7Pz4MBOSpUyJCTO'),
-  },
-  {
-    hint: 'female_old',
-    label: 'GIF 4',
-    path: '/avatars/gif4.gif',
-    ageGroup: 'senior',
-    gender: 'female',
-    voiceId: voiceOr('VITE_ELEVENLABS_VOICE_GIF4', 'YxrwjAKoUKULGd0g8K9Y'),
-  },
-  {
-    hint: 'child_male',
-    label: 'GIF 5',
-    path: '/avatars/gif5.gif',
-    ageGroup: 'child',
-    gender: 'male',
-    voiceId: voiceOr('VITE_ELEVENLABS_VOICE_GIF5', 'FRY6vOtGqwamgAf39SwP'),
-  },
-  {
-    hint: 'child_female',
-    label: 'GIF 6',
-    path: '/avatars/gif6.gif',
-    ageGroup: 'child',
-    gender: 'female',
-    voiceId: voiceOr('VITE_ELEVENLABS_VOICE_GIF6', 'DOqLhiOMs8JmafdomNTP'),
-  },
-];
-
 const toAbsoluteUrl = (path) => {
   if (!path) return '';
-  return API_BASE ? `${API_BASE}${path}` : path;
+  // Encode spaces in path segments
+  const encoded = path.split('/').map(s => s ? encodeURIComponent(s) : s).join('/');
+  return API_BASE ? `${API_BASE}${encoded}` : encoded;
 };
 
 const normalizeGender = (gender) => {
@@ -82,27 +33,107 @@ const ageToGroup = (age) => {
   return 'adult';
 };
 
-export const REAL_AVATARS = AVATAR_PROFILES.map((a) => ({
-  ...a,
-  img: toAbsoluteUrl(a.path),
-  animated: true,
-}));
+// ─── Catégories avec tous les gifs disponibles ───────────────────────────────
+const CATEGORIES = [
+  {
+    key: 'male_adult',
+    gender: 'male',
+    ageGroup: 'adult',
+    label: 'Homme adulte',
+    voiceId: voiceOr('VITE_ELEVENLABS_VOICE_GIF1', '101A8UFM73tcrunWGirw'),
+    paths: [
+      '/avatars/adulte homme.gif',
+      '/avatars/adulte homme 2.gif',
+      '/avatars/adulte homme 3.gif',
+    ],
+  },
+  {
+    key: 'female_adult',
+    gender: 'female',
+    ageGroup: 'adult',
+    label: 'Femme adulte',
+    voiceId: voiceOr('VITE_ELEVENLABS_VOICE_GIF2', 'fBpCO0Kf0krKLYGOu65w'),
+    paths: [
+      '/avatars/adulte femme.gif',
+      '/avatars/adulte femme 2.gif',
+      '/avatars/ADULTE FEMME 3.gif',
+    ],
+  },
+  {
+    key: 'male_senior',
+    gender: 'male',
+    ageGroup: 'senior',
+    label: 'Homme senior',
+    voiceId: voiceOr('VITE_ELEVENLABS_VOICE_GIF3', '6aRkp7Pz4MBOSpUyJCTO'),
+    paths: [
+      '/avatars/senior homme.gif',
+      '/avatars/senior homme 2.gif',
+    ],
+  },
+  {
+    key: 'female_senior',
+    gender: 'female',
+    ageGroup: 'senior',
+    label: 'Femme senior',
+    voiceId: voiceOr('VITE_ELEVENLABS_VOICE_GIF4', 'YxrwjAKoUKULGd0g8K9Y'),
+    paths: ['/avatars/senior femme.gif'],
+  },
+  {
+    key: 'male_child',
+    gender: 'male',
+    ageGroup: 'child',
+    label: 'Garçon enfant',
+    voiceId: voiceOr('VITE_ELEVENLABS_VOICE_GIF5', 'FRY6vOtGqwamgAf39SwP'),
+    paths: ['/avatars/enfant homme.gif'],
+  },
+  {
+    key: 'female_child',
+    gender: 'female',
+    ageGroup: 'child',
+    label: 'Fille enfant',
+    voiceId: voiceOr('VITE_ELEVENLABS_VOICE_GIF6', 'DOqLhiOMs8JmafdomNTP'),
+    paths: ['/avatars/enfant femme.gif'],
+  },
+];
+
+// Liste plate de tous les avatars disponibles (pour le sélecteur web)
+export const REAL_AVATARS = CATEGORIES.flatMap((cat) =>
+  cat.paths.map((path) => ({
+    hint: cat.key,
+    label: path.split('/').pop().replace('.gif', ''),
+    path,
+    img: toAbsoluteUrl(path),
+    gender: cat.gender,
+    ageGroup: cat.ageGroup,
+    voiceId: cat.voiceId,
+    animated: true,
+  }))
+);
+
+// Retourne un avatar aléatoire pour une catégorie gender+ageGroup donnée
+const pickRandom = (gender, ageGroup) => {
+  const pool = REAL_AVATARS.filter(
+    (a) => a.gender === gender && a.ageGroup === ageGroup
+  );
+  if (pool.length === 0) return REAL_AVATARS[0];
+  return pool[Math.floor(Math.random() * pool.length)];
+};
 
 export const resolveAvatarProfile = ({ hint, age, gender } = {}) => {
-  const normalizedHint = (hint || '').toString().trim().toLowerCase();
-  if (normalizedHint) {
-    const byHint = REAL_AVATARS.find((a) => a.hint === normalizedHint);
-    if (byHint) return byHint;
+  // Cherche par path exact (edition d'un cas existant)
+  if (hint) {
+    const byPath = REAL_AVATARS.find(
+      (a) => a.path === hint ||
+             a.img === hint ||
+             a.path.toLowerCase() === (hint || '').toLowerCase()
+    );
+    if (byPath) return byPath;
   }
 
+  // Sélection aléatoire dans la bonne catégorie
   const ageGroup = ageToGroup(age);
   const genderNorm = normalizeGender(gender);
-  const byAgeAndGender = REAL_AVATARS.find(
-    (a) => a.ageGroup === ageGroup && a.gender === genderNorm,
-  );
-  if (byAgeAndGender) return byAgeAndGender;
-
-  return REAL_AVATARS[0];
+  return pickRandom(genderNorm, ageGroup);
 };
 
 export const resolveAvatarByValue = (value) => {
@@ -111,7 +142,7 @@ export const resolveAvatarByValue = (value) => {
   return (
     REAL_AVATARS.find((a) => a.path === raw) ||
     REAL_AVATARS.find((a) => a.img === raw) ||
-    REAL_AVATARS.find((a) => a.img.endsWith(raw)) ||
+    REAL_AVATARS.find((a) => a.path.toLowerCase() === raw.toLowerCase()) ||
     null
   );
 };

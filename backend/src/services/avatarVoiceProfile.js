@@ -1,21 +1,19 @@
 const voiceOr = (envName, fallback) => (process.env[envName] || fallback || '').trim();
 
-// ─── Google Cloud TTS voice configs par profil ───────────────────────────────
-// Voix Neural2 = haute qualité (incluses dans le free tier 1M chars/mois)
-// pitch en demi-tons (-20 à +20), speakingRate (0.25 à 4.0)
+// ─── Profils voix Google Cloud TTS ───────────────────────────────────────────
 const GOOGLE_TTS_PROFILES = {
-    male_young:   { name: voiceOr('GTTS_VOICE_GIF1', 'fr-FR-Neural2-B'), pitch: 2,  speakingRate: 1.0 },
-    female_young: { name: voiceOr('GTTS_VOICE_GIF2', 'fr-FR-Neural2-A'), pitch: 0,  speakingRate: 1.0 },
-    male_old:     { name: voiceOr('GTTS_VOICE_GIF3', 'fr-FR-Neural2-D'), pitch: -3, speakingRate: 0.9 },
-    female_old:   { name: voiceOr('GTTS_VOICE_GIF4', 'fr-FR-Neural2-C'), pitch: -1, speakingRate: 0.9 },
-    child_male:   { name: voiceOr('GTTS_VOICE_GIF5', 'fr-FR-Neural2-B'), pitch: 5,  speakingRate: 1.1 },
-    child_female: { name: voiceOr('GTTS_VOICE_GIF6', 'fr-FR-Neural2-A'), pitch: 6,  speakingRate: 1.1 },
+  male_young:   { name: voiceOr('GTTS_VOICE_GIF1', 'fr-FR-Neural2-B'), pitch: 2,  speakingRate: 1.0 },
+  female_young: { name: voiceOr('GTTS_VOICE_GIF2', 'fr-FR-Neural2-A'), pitch: 0,  speakingRate: 1.0 },
+  male_old:     { name: voiceOr('GTTS_VOICE_GIF3', 'fr-FR-Neural2-D'), pitch: -3, speakingRate: 0.9 },
+  female_old:   { name: voiceOr('GTTS_VOICE_GIF4', 'fr-FR-Neural2-C'), pitch: -1, speakingRate: 0.9 },
+  child_male:   { name: voiceOr('GTTS_VOICE_GIF5', 'fr-FR-Neural2-B'), pitch: 5,  speakingRate: 1.1 },
+  child_female: { name: voiceOr('GTTS_VOICE_GIF6', 'fr-FR-Neural2-A'), pitch: 6,  speakingRate: 1.1 },
 };
 
+// ─── Profils avatar/voix (un par catégorie genre+âge) ────────────────────────
 const AVATAR_VOICE_PROFILES = [
   {
     hint: 'male_young',
-    path: '/avatars/gif1.gif',
     ageGroup: 'adult',
     gender: 'male',
     voiceId: voiceOr('ELEVENLABS_VOICE_GIF1', '101A8UFM73tcrunWGirw'),
@@ -23,7 +21,6 @@ const AVATAR_VOICE_PROFILES = [
   },
   {
     hint: 'female_young',
-    path: '/avatars/gif2.gif',
     ageGroup: 'adult',
     gender: 'female',
     voiceId: voiceOr('ELEVENLABS_VOICE_GIF2', 'fBpCO0Kf0krKLYGOu65w'),
@@ -31,7 +28,6 @@ const AVATAR_VOICE_PROFILES = [
   },
   {
     hint: 'male_old',
-    path: '/avatars/gif3.gif',
     ageGroup: 'senior',
     gender: 'male',
     voiceId: voiceOr('ELEVENLABS_VOICE_GIF3', '6aRkp7Pz4MBOSpUyJCTO'),
@@ -39,7 +35,6 @@ const AVATAR_VOICE_PROFILES = [
   },
   {
     hint: 'female_old',
-    path: '/avatars/gif4.gif',
     ageGroup: 'senior',
     gender: 'female',
     voiceId: voiceOr('ELEVENLABS_VOICE_GIF4', 'YxrwjAKoUKULGd0g8K9Y'),
@@ -47,7 +42,6 @@ const AVATAR_VOICE_PROFILES = [
   },
   {
     hint: 'child_male',
-    path: '/avatars/gif5.gif',
     ageGroup: 'child',
     gender: 'male',
     voiceId: voiceOr('ELEVENLABS_VOICE_GIF5', 'FRY6vOtGqwamgAf39SwP'),
@@ -55,7 +49,6 @@ const AVATAR_VOICE_PROFILES = [
   },
   {
     hint: 'child_female',
-    path: '/avatars/gif6.gif',
     ageGroup: 'child',
     gender: 'female',
     voiceId: voiceOr('ELEVENLABS_VOICE_GIF6', 'DOqLhiOMs8JmafdomNTP'),
@@ -78,8 +71,34 @@ const ageToGroup = (age) => {
   return 'adult';
 };
 
+// Déduit le profil voix depuis le nom du fichier gif
+const profileFromFilename = (filename) => {
+  const f = filename.toLowerCase();
+  const isFemale  = f.includes('femme') || f.includes('female');
+  const isMale    = f.includes('homme') || f.includes('male');
+  const isChild   = f.includes('enfant') || f.includes('child');
+  const isSenior  = f.includes('senior') || f.includes('vieux') || f.includes('old');
+
+  if (isChild  && isFemale) return AVATAR_VOICE_PROFILES.find(p => p.hint === 'child_female');
+  if (isChild)              return AVATAR_VOICE_PROFILES.find(p => p.hint === 'child_male');
+  if (isSenior && isFemale) return AVATAR_VOICE_PROFILES.find(p => p.hint === 'female_old');
+  if (isSenior)             return AVATAR_VOICE_PROFILES.find(p => p.hint === 'male_old');
+  if (isFemale)             return AVATAR_VOICE_PROFILES.find(p => p.hint === 'female_young');
+  if (isMale)               return AVATAR_VOICE_PROFILES.find(p => p.hint === 'male_young');
+
+  // Legacy gif1-gif6
+  if (f.includes('gif6') || f.includes('avatar6')) return AVATAR_VOICE_PROFILES.find(p => p.hint === 'child_female');
+  if (f.includes('gif5') || f.includes('avatar5')) return AVATAR_VOICE_PROFILES.find(p => p.hint === 'child_male');
+  if (f.includes('gif4') || f.includes('avatar4')) return AVATAR_VOICE_PROFILES.find(p => p.hint === 'female_old');
+  if (f.includes('gif3') || f.includes('avatar3')) return AVATAR_VOICE_PROFILES.find(p => p.hint === 'male_old');
+  if (f.includes('gif2') || f.includes('avatar2')) return AVATAR_VOICE_PROFILES.find(p => p.hint === 'female_young');
+  if (f.includes('gif1') || f.includes('avatar1')) return AVATAR_VOICE_PROFILES.find(p => p.hint === 'male_young');
+
+  return null;
+};
+
 const resolveAvatarProfile = ({ avatar, age, gender } = {}) => {
-  // gender from medical_history always takes priority — ensures voice matches patient sex
+  // medical_history.gender = source de vérité pour la voix
   if (gender) {
     const ageGroup = ageToGroup(age);
     const genderNorm = normalizeGender(gender);
@@ -89,29 +108,12 @@ const resolveAvatarProfile = ({ avatar, age, gender } = {}) => {
     );
   }
 
-  // No gender info — fall back to avatar filename
-  const normalizedAvatar = (avatar || '').toString().trim().toLowerCase();
-  if (normalizedAvatar) {
-    // Legacy avatar filenames (seeded data / older DB rows)
-    if (normalizedAvatar.includes('avatar1')) {
-      return AVATAR_VOICE_PROFILES.find((p) => p.hint === 'male_young') || AVATAR_VOICE_PROFILES[0];
-    }
-    if (normalizedAvatar.includes('avatar2')) {
-      return AVATAR_VOICE_PROFILES.find((p) => p.hint === 'female_young') || AVATAR_VOICE_PROFILES[0];
-    }
-    if (normalizedAvatar.includes('avatar3')) {
-      return AVATAR_VOICE_PROFILES.find((p) => p.hint === 'male_old') || AVATAR_VOICE_PROFILES[0];
-    }
-    if (normalizedAvatar.includes('avatar4')) {
-      return AVATAR_VOICE_PROFILES.find((p) => p.hint === 'female_old') || AVATAR_VOICE_PROFILES[0];
-    }
-
-    const byPath = AVATAR_VOICE_PROFILES.find((p) => p.path.toLowerCase() === normalizedAvatar);
-    if (byPath) return byPath;
-    const byHint = AVATAR_VOICE_PROFILES.find((p) => p.hint === normalizedAvatar);
-    if (byHint) return byHint;
-    const bySuffix = AVATAR_VOICE_PROFILES.find((p) => normalizedAvatar.endsWith(p.path.toLowerCase()));
-    if (bySuffix) return bySuffix;
+  // Pas de genre explicite → déduire depuis le nom du gif
+  const avatarPath = (avatar || '').toString().trim();
+  if (avatarPath) {
+    const filename = avatarPath.split('/').pop();
+    const fromFile = profileFromFilename(filename);
+    if (fromFile) return fromFile;
   }
 
   return AVATAR_VOICE_PROFILES[0];
