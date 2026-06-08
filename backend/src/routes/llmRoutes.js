@@ -1,8 +1,6 @@
 ﻿const express = require('express');
 const router = express.Router();
 const axios = require('axios');
-const fs = require('fs');
-const path = require('path');
 const supabase = require('../config/supabase');
 const { generateResponse, generatePatientResponse, generateCase, generateCourse, generateQuizFromCase } = require('../services/llmService');
 const { resolveAvatarProfile, GOOGLE_TTS_PROFILES } = require('../services/avatarVoiceProfile');
@@ -59,19 +57,6 @@ const normalizeDiagnosisKey = (value) =>
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, ' ')
     .trim();
-
-function loadPublishedQuizzes() {
-  try {
-    return JSON.parse(fs.readFileSync(PUBLISHED_QUIZZES_FILE, 'utf8'));
-  } catch (_) {
-    return [];
-  }
-}
-
-function savePublishedQuizzes(rows) {
-  fs.mkdirSync(path.dirname(PUBLISHED_QUIZZES_FILE), { recursive: true });
-  fs.writeFileSync(PUBLISHED_QUIZZES_FILE, JSON.stringify(rows, null, 2));
-}
 
 const validateSvtCourseContent = (content) => {
   const normalized = normalizeText(content);
