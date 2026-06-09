@@ -38,5 +38,4 @@ mobile/windows/flutter/ephemeral/
 # Web build outputs
 web/dist/
 
-# Backend uploads/cache (keep avatars committed only if intentional)
-backend/public/avatars/
+# Backend uploads/cache (avatars sont committés intentionnellement)
