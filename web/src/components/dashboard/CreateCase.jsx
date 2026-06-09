@@ -512,24 +512,41 @@ const CreateCase = ({ onBack, editData, presetSpecialtyId, presetSeason, presetE
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-12">
                 {/* Left Column */}
                 <div className="space-y-12">
-                    {/* Section 0: Avatar */}
+                    {/* Section 0: Avatar — filtré selon genre + âge */}
                     <div className="stat-card p-10 bg-gradient-to-br from-[#0D1B17] to-[#050C0A]">
                         <SectionHeader num="0" title="Choix de l'Avatar" />
-                        <div className="grid grid-cols-3 gap-4">
-                            {REAL_AVATARS.map((av, idx) => (
-                                <AvatarThumb
-                                    key={av.label + idx}
-                                    avatar={av}
-                                    selected={selectedAvatarPath === av.path}
-                                    onSelect={() => {
-                                        setSelectedAvatarPath(av.path);
-                                        setSelectedVoiceId(av.voiceId || '');
-                                        // Sync gender dropdown to match the chosen avatar
-                                        setPatientGender(av.gender === 'female' ? 'Féminin' : 'Masculin');
-                                    }}
-                                />
-                            ))}
-                        </div>
+                        {(() => {
+                            const gNorm = patientGender === 'Féminin' ? 'female' : 'male';
+                            const age = Number(patientAge);
+                            const ageGroup = Number.isFinite(age) && patientAge !== ''
+                                ? age <= 14 ? 'child' : age >= 60 ? 'senior' : 'adult'
+                                : null;
+                            const filtered = REAL_AVATARS.filter(av =>
+                                av.gender === gNorm && (ageGroup === null || av.ageGroup === ageGroup)
+                            );
+                            const label = ageGroup
+                                ? `${gNorm === 'female' ? 'Femme' : 'Homme'} ${ageGroup === 'child' ? 'enfant' : ageGroup === 'senior' ? 'senior' : 'adulte'}`
+                                : `${gNorm === 'female' ? 'Femme' : 'Homme'} — entrez l'âge pour affiner`;
+                            return (
+                                <>
+                                    <p className="text-xs text-[#00C88C] mb-4 font-semibold">{label} · {filtered.length} gif(s) disponible(s)</p>
+                                    <div className="grid grid-cols-3 gap-4">
+                                        {filtered.map((av, idx) => (
+                                            <AvatarThumb
+                                                key={av.label + idx}
+                                                avatar={av}
+                                                selected={selectedAvatarPath === av.path}
+                                                onSelect={() => {
+                                                    setSelectedAvatarPath(av.path);
+                                                    setSelectedVoiceId(av.voiceId || '');
+                                                    setPatientGender(av.gender === 'female' ? 'Féminin' : 'Masculin');
+                                                }}
+                                            />
+                                        ))}
+                                    </div>
+                                </>
+                            );
+                        })()}
                     </div>
 
                     {/* Section 1: ID Patient */}
